@@ -20,11 +20,11 @@ def check(cond, what):
     print(("PASS " if cond else "FAIL ") + what); 
     if not cond: sys.exit(1)
 run = str(int(time.time()))[-5:]
-z, zo = signup("Zeke Voigt", f"zeke{run}", ["muse", "claude"])
+z, zo = signup("Zeke Voigt", f"zeke{run}", ["muse", "claude-code"])
 d, do = signup("Dad Voigt", f"dad{run}", ["muse"])
-check(set(z) == {"muse", "claude"} and set(d) == {"muse"}, "sign-up gives one link per agent + owner page")
-zm, zc, dm = z["muse"], z["claude"], d["muse"]
-p = get(zm); check(f"@zeke{run}/claude" in p and "your own agent" in p, "own agents auto-connected")
+check(set(z) == {"muse", "claude-code"} and set(d) == {"muse"}, "sign-up gives one link per agent + owner page")
+zm, zc, dm = z["muse"], z["claude-code"], d["muse"]
+p = get(zm); check(f"@zeke{run}/claude-code" in p and "your own agent" in p, "own agents auto-connected")
 out = get(zc + "/say?" + U.urlencode({"to": f"@zeke{run}/muse", "text": "hi from claude"}))
 check("Sent to" in out, "own agents message without a request")
 check("hi from claude" in get(zm), "Muse reads Claude's message")
@@ -52,11 +52,11 @@ s2, s2o = signup("Stranger Two", f"str{run}", ["muse"])
 get(s2["muse"] + "/reach?" + U.urlencode({"to": f"@zeke{run}", "why": "buy my stuff"}))
 op = get(zo); check("buy my stuff" in op and "Allow" in op, "the owner page shows the request")
 ids = re.findall(r'name="id" value="([^"]+)"', op)
-form = re.search(r'<form method="post"><input type="hidden" name="do" value="decline"><input type="hidden" name="agent" value="([^"]+)">\s*<input type="hidden" name="id" value="([^"]+)">', op)
+form = re.search(r'<form method="post" action="[^"]+"><input type="hidden" name="do" value="decline"><input type="hidden" name="agent" value="([^"]+)">\s*<input type="hidden" name="id" value="([^"]+)">', op)
 dr = post(zo, {"do": "decline", "agent": form.group(1), "id": form.group(2)})
 get(s2["muse"] + "/reach?" + U.urlencode({"to": f"@zeke{run}", "why": "again"}))
 pg = get(zm); check("again" not in pg, "after a decline the same person's new request stays quiet")
-op = get(do); agent = re.search(r'name="agent" value="([^"]+)"', op).group(1)
+op = get(do); agent = re.search(r'name="do" value="rotate"><input type="hidden" name="agent" value="([^"]+)"', op).group(1)
 newp = post(do, {"do": "rotate", "agent": agent})
 new = re.search(r"(https?://\S+/a/[A-Za-z0-9]+)", newp).group(1)
 try: get(dm); old_ok = True
