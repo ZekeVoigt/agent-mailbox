@@ -56,7 +56,7 @@ def refused(fn):
         fn()
         return False
     except R.HTTPError as e:
-        return e.code in (401, 403, 404, 410)
+        return 400 <= e.code < 500
 
 
 def session(uid):
@@ -179,11 +179,34 @@ def main():
     with s2o.open(R.Request(loc(B + got["photo"]), headers=UA), timeout=20) as r:
         check(r.read() == jpg and r.headers["content-type"] == "image/jpeg", "the photo is served back")
     check(refused(lambda: get(B + got["photo"])), "a photo is shown to signed-in people only")
-    s2home = get(B + "/home", s2o)
-    s2agent = re.search(r'<option value="([^"]+)">', s2home).group(1)
+    pre = json.loads(get(B + f"/home/board/zeke{run}", s2o))
+    check(pre["link"] == "none" and len(pre["your_agents"]) == 1, "before asking: not connected, one agent to ask through")
+    s2agent = pre["your_agents"][0]["id"]
     check(jpost(B + "/home/invite", {"agent": s2agent, "person": f"zeke{run}", "why": "canvas hello"},
                 s2o).get("state") == "asked", "Ask to connect from the canvas sends a request")
     check("canvas hello" in get(B + "/home", zo), "it waits on Zeke's dashboard")
+    # the board: live suggestions, status, posts, follows, the feed
+    sug = json.loads(get(B + "/home/suggest?q=" + U.quote(f"zeke{run}"[:6]), s2o))
+    check(any(x["handle"] == f"zeke{run}" and x["photo"] for x in sug), "live suggestions find Zeke as you type")
+    jpost(B + "/home/status", {"status": "shipping the board"}, zo)
+    check(jpost(B + "/home/post", {"text": "first post"}, zo).get("ok"), "Zeke posts")
+    check(refused(lambda: jpost(B + "/home/post", {"text": "x" * 501}, zo)), "a post over 500 characters is refused")
+    check(jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o).get("ok"), "the stranger follows Zeke")
+    bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
+    check(bz["followers"] == 1 and bz["you_follow"] and bz["status"] == "shipping the board"
+          and bz["posts"][0]["text"] == "first post" and set(bz["agents"]) == {"muse", "claude-code"}
+          and bz["link"] == "asked", "Zeke's board: status, post, agents, 1 follower, the request waiting")
+    feed = json.loads(get(B + "/home/feed", s2o))
+    check(feed and feed[0]["text"] == "first post" and feed[0]["handle"] == f"zeke{run}", "it is in the follower's feed")
+    fl = json.loads(get(B + f"/home/follows/zeke{run}?kind=followers", zo))
+    check([x["handle"] for x in fl] == [f"str{run}"], "Zeke sees who follows him")
+    me = json.loads(get(B + f"/home/board/zeke{run}", zo))
+    check(me["self"] and me["follows_you"] is False and me["posts_n"] == 1, "Zeke's own board")
+    jpost(B + "/home/post-delete", {"id": me["posts"][0]["id"]}, zo)
+    jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": False}, s2o)
+    bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
+    check(bz["posts_n"] == 0 and bz["followers"] == 0, "a post deleted, an unfollow")
+    jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o)
     get(s2["muse"] + "/reach?" + U.urlencode({"to": f"@zeke{run}", "why": "buy my stuff"}))
     acc = re.search(r"decline:\s+(https?://\S+)", get(zm)).group(1)
     check("Declined" in get(acc), "Zeke's Muse may decline")

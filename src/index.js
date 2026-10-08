@@ -22,7 +22,8 @@ const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
 const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
-const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3;
+const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
+  MAX_POST = 500, MAX_STATUS = 100;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -94,8 +95,15 @@ export class Directory {
       CREATE TABLE IF NOT EXISTS audit (clerk TEXT, at INTEGER, what TEXT, ip TEXT, ua TEXT);
       CREATE INDEX IF NOT EXISTS audit_clerk ON audit (clerk, at);
       CREATE TABLE IF NOT EXISTS photo (handle TEXT PRIMARY KEY, data TEXT, at INTEGER);
-      CREATE TABLE IF NOT EXISTS finds (clerk TEXT, at INTEGER);`);
+      CREATE TABLE IF NOT EXISTS finds (clerk TEXT, at INTEGER);
+      CREATE TABLE IF NOT EXISTS hits (clerk TEXT, kind TEXT, at INTEGER);
+      CREATE TABLE IF NOT EXISTS post (id TEXT PRIMARY KEY, handle TEXT, text TEXT, at INTEGER);
+      CREATE INDEX IF NOT EXISTS post_handle ON post (handle, at);
+      CREATE TABLE IF NOT EXISTS follow (follower TEXT, followee TEXT, at INTEGER,
+        PRIMARY KEY (follower, followee));
+      CREATE INDEX IF NOT EXISTS follow_followee ON follow (followee);`);
     try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
+    try { this.sql.exec("ALTER TABLE person ADD COLUMN status TEXT DEFAULT ''"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -106,11 +114,16 @@ export class Directory {
       "ORDER BY id != ?, at, name", person.handle, person.primary_agent);
     return person;
   }
+  unfollowAll(handle) {               // a person's posts and follows, both ways
+    this.sql.exec("DELETE FROM post WHERE handle = ?", handle);
+    this.sql.exec("DELETE FROM follow WHERE follower = ? OR followee = ?", handle, handle);
+  }
   forget(clerk) {                     // everything held about a sign-in but the person row
     if (!clerk) return;
     this.sql.exec("DELETE FROM session WHERE clerk = ?", clerk);
     this.sql.exec("DELETE FROM audit WHERE clerk = ?", clerk);
     this.sql.exec("DELETE FROM finds WHERE clerk = ?", clerk);
+    this.sql.exec("DELETE FROM hits WHERE clerk = ?", clerk);
   }
 
   async fetch(req) {
@@ -177,6 +190,7 @@ export class Directory {
     if (p === "/delete") {            // a person, their agents' links, sessions and security log
       const person = this.one("SELECT clerk FROM person WHERE handle = ?", b.handle);
       if (person) this.forget(person.clerk);
+      this.unfollowAll(b.handle);
       this.sql.exec("DELETE FROM photo WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM agent WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM person WHERE handle = ?", b.handle);
@@ -248,6 +262,66 @@ export class Directory {
       return json({ok: true});
     }
     if (p === "/photo-get") return json(this.one("SELECT data FROM photo WHERE handle = ?", b.handle));
+    if (p === "/quota") {             // b.most of b.kind an hour, a person
+      this.sql.exec("DELETE FROM hits WHERE at < ?", now - 3600e3);
+      if (this.one("SELECT count(*) n FROM hits WHERE clerk = ? AND kind = ?", b.clerk, b.kind).n >= b.most)
+        return json({ok: false});
+      this.sql.exec("INSERT INTO hits VALUES (?, ?, ?)", b.clerk, b.kind, now);
+      return json({ok: true});
+    }
+    // -- the social board: suggestions, a person's board, posts, status, follows ---------------
+    if (p === "/suggest") {
+      const q = String(b.q || "").trim().replace(/^@/, "").toLowerCase();
+      if (!q) return json([]);
+      return json(this.all("SELECT p.handle, p.name, p.status, f.at photo FROM person p LEFT JOIN " +
+        "photo f USING (handle) WHERE p.handle = ? OR (p.findable = 1 AND (p.handle LIKE ? OR " +
+        "lower(p.name) LIKE ? OR lower(p.name) LIKE ?)) ORDER BY p.handle != ?, " +
+        "p.handle NOT LIKE ?, lower(p.name) NOT LIKE ?, p.name LIMIT 6",
+        q, `${q}%`, `${q}%`, `% ${q}%`, q, `${q}%`, `${q}%`));
+    }
+    if (p === "/board") {
+      const x = this.one("SELECT p.handle, p.name, p.bio, p.status, f.at photo FROM person p " +
+        "LEFT JOIN photo f USING (handle) WHERE p.handle = ?", b.handle);
+      if (!x) return json(null);
+      x.agents = this.all("SELECT name FROM agent WHERE handle = ? ORDER BY at", b.handle).map(a => a.name);
+      x.followers = this.one("SELECT count(*) n FROM follow WHERE followee = ?", b.handle).n;
+      x.following = this.one("SELECT count(*) n FROM follow WHERE follower = ?", b.handle).n;
+      x.posts_n = this.one("SELECT count(*) n FROM post WHERE handle = ?", b.handle).n;
+      x.posts = this.all("SELECT id, text, at FROM post WHERE handle = ? ORDER BY at DESC LIMIT 30", b.handle);
+      x.you_follow = !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
+      x.follows_you = !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ?", b.handle, b.viewer);
+      return json(x);
+    }
+    if (p === "/follows") {           // a person's followers or following, newest first
+      const [col, other] = b.kind === "following" ? ["follower", "followee"] : ["followee", "follower"];
+      return json(this.all(`SELECT p.handle, p.name, p.status, f.at photo FROM follow w JOIN person p ` +
+        `ON p.handle = w.${other} LEFT JOIN photo f ON f.handle = p.handle WHERE w.${col} = ? ` +
+        `ORDER BY w.at DESC LIMIT 200`, b.handle));
+    }
+    if (p === "/feed") return json(this.all("SELECT t.id, t.text, t.at, p.handle, p.name, f.at photo " +
+      "FROM post t JOIN follow w ON w.followee = t.handle AND w.follower = ? JOIN person p ON " +
+      "p.handle = t.handle LEFT JOIN photo f ON f.handle = t.handle ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/post-add") {
+      if (this.one("SELECT count(*) n FROM post WHERE handle = ? AND at > ?", b.handle, now - 86400e3).n >= POSTS_PER_DAY)
+        return json({error: `At most ${POSTS_PER_DAY} posts a day.`});
+      this.sql.exec("INSERT INTO post VALUES (?, ?, ?, ?)", b.id, b.handle, b.text, now);
+      return json({ok: true});
+    }
+    if (p === "/post-del") {
+      this.sql.exec("DELETE FROM post WHERE id = ? AND handle = ?", b.id, b.handle);
+      return json({ok: true});
+    }
+    if (p === "/status-set") {
+      this.sql.exec("UPDATE person SET status = ? WHERE handle = ?", b.status, b.handle);
+      return json({ok: true});
+    }
+    if (p === "/follow") {
+      if (b.on) {
+        if (!this.one("SELECT 1 FROM person WHERE handle = ?", b.handle)) return json({error: "No one by that name."});
+        this.sql.exec("INSERT OR IGNORE INTO follow VALUES (?, ?, ?)", b.viewer, b.handle, now);
+      } else this.sql.exec("DELETE FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
+      return json({ok: true});
+    }
     if (p === "/find-quota") {        // at most FINDS_PER_HOUR searches a person an hour
       this.sql.exec("DELETE FROM finds WHERE at < ?", now - 3600e3);
       if (this.one("SELECT count(*) n FROM finds WHERE clerk = ?", b.clerk).n >= FINDS_PER_HOUR)
@@ -258,6 +332,7 @@ export class Directory {
     if (p === "/delete-me") {         // the person's own: everything the directory holds of them
       const person = this.one("SELECT handle FROM person WHERE clerk = ?", b.clerk);
       if (person) {
+        this.unfollowAll(person.handle);
         this.sql.exec("DELETE FROM photo WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM agent WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM person WHERE handle = ?", person.handle);
@@ -783,6 +858,39 @@ async function canvasRoute(req, env, url) {
       photo: prof && prof.photo ? `/home/photo/${top.handle}?v=${prof.photo}` : null,
       people: hits.slice(1).map(x => ({handle: "@" + x.handle}))});
   }
+  const photoUrl = x => x.photo ? `/home/photo/${x.handle}?v=${x.photo}` : null;
+  const card = x => ({handle: x.handle, name: x.name || "", status: x.status || "", photo: photoUrl(x)});
+  if (p === "/home/suggest" && req.method === "GET") {
+    if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "suggest", most: SUGGESTS_PER_HOUR})).ok)
+      return json({error: "Too many searches: try again in an hour."}, 429);
+    return json((await call(dir(env), "/suggest", {q: clean(url.searchParams.get("q"), 64)})).map(card));
+  }
+  if (p.startsWith("/home/board/") && req.method === "GET") {
+    const h = p.slice(12).toLowerCase();
+    const x = await call(dir(env), "/board", {handle: h, viewer: person.handle});
+    if (!x) return json({error: "No one by that name."}, 404);
+    // how the viewer's agents stand with this person: connected, waiting, or not yet
+    let link = "none";
+    if (h !== person.handle) for (const a of person.agents) {
+      const st = await call(agentObj(env, a.id), "/status");
+      for (const y of st.peers || []) if (y.handle === h) {
+        if (y.state === "connected") link = "connected";
+        else if (y.state === "requested" && link === "none") link = "asked";
+        else if (y.state === "asked" && link === "none") link = "asks-you";
+      }
+    }
+    return json({...card(x), bio: x.bio || "", agents: x.agents, followers: x.followers,
+      following: x.following, posts_n: x.posts_n, posts: x.posts, you_follow: x.you_follow,
+      follows_you: x.follows_you, self: h === person.handle, link,
+      your_agents: h === person.handle ? [] : person.agents.map(a => ({id: a.id, name: a.name}))});
+  }
+  if (p.startsWith("/home/follows/") && req.method === "GET") {
+    const kind = url.searchParams.get("kind") === "following" ? "following" : "followers";
+    return json((await call(dir(env), "/follows", {handle: p.slice(14).toLowerCase(), kind})).map(card));
+  }
+  if (p === "/home/feed" && req.method === "GET")
+    return json((await call(dir(env), "/feed", {viewer: person.handle})).map(x => ({...card(x), id: x.id,
+      text: x.text, at: x.at})));
   if (req.method !== "POST") return text("Unknown address.", 404);
   if (!sameOrigin(req, url)) return json({error: "That didn't come from this site."}, 403);
   const raw = await req.text();
@@ -802,6 +910,27 @@ async function canvasRoute(req, env, url) {
       bio: clean(f.bio, 280), findable: f.findable_by_name !== false});
     await audit(env, req, ses.clerk, f.photo ? "Changed the profile and photo" : "Changed the profile");
     return json({ok: true});
+  }
+  if (p === "/home/post") {
+    const t = clean(String(f.text || "").replace(/\r/g, ""), MAX_POST + 1);
+    if (!t) return json({error: "Write something first."}, 400);
+    if (t.length > MAX_POST) return json({error: `At most ${MAX_POST} characters.`}, 400);
+    const got = await call(dir(env), "/post-add", {id: secret(12), handle: person.handle, text: t});
+    return got.error ? json(got, 429) : json({ok: true});
+  }
+  if (p === "/home/post-delete") {
+    await call(dir(env), "/post-del", {id: String(f.id || ""), handle: person.handle});
+    return json({ok: true});
+  }
+  if (p === "/home/status") {
+    await call(dir(env), "/status-set", {handle: person.handle, status: clean(f.status, MAX_STATUS)});
+    return json({ok: true});
+  }
+  if (p === "/home/follow") {
+    const t = parseTo(f.handle);
+    if (!t || t.handle === person.handle) return json({error: "Pick someone else."}, 400);
+    const got = await call(dir(env), "/follow", {viewer: person.handle, handle: t.handle, on: !!f.on});
+    return got.error ? json(got, 404) : json({ok: true});
   }
   if (p === "/home/invite") {
     const a = person.agents.find(x => x.id === f.agent), to = parseTo(f.person);

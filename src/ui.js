@@ -66,6 +66,66 @@ button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#73
 .row .acts form:first-child button{color:#000;background:#fafafa}
 .row .acts form:first-child button:hover{background:#e5e5e5;color:#000}
 .main{min-width:0;max-width:100%}
+section#connections:not([hidden]){display:flex;flex-direction:column;height:100%}
+#connections .graph{flex:1;min-height:440px}
+.ncard{width:min(380px,calc(100% - 24px))}
+.sugg{position:absolute;left:0;right:0;bottom:calc(100% + 8px);max-height:340px;overflow-y:auto;padding:6px;
+background:#1b1b1b;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.55)}
+.sugg[hidden]{display:none}
+.sugg .opt{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:8px 10px;text-align:left;
+font:inherit;font-size:13.5px;color:var(--soft);background:none;border:0;border-radius:10px}
+.sugg .opt.on{color:var(--ink);background:#262626}
+.sugg .face{width:34px;height:34px;font-size:13px}
+.sugg .face img,.bhd .face img,.ncard .who .face img{width:100%;height:100%;object-fit:cover}
+.sugg span{min-width:0}
+.sugg b{display:block;font-weight:500}
+.sugg small{display:block;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sugg .none{margin:8px 10px;font-size:13px;color:var(--dim)}
+.bd:empty{min-height:120px}
+.bhd{display:flex;align-items:center;gap:14px;margin:0 30px 14px 0}
+.bhd .face.big{width:68px;height:68px;font-size:26px}
+.bhd strong{font-size:17px}
+.bhd .status{margin:6px 0 0;font-size:13px;color:var(--soft)}
+.stats{display:flex;gap:22px;margin:0 0 14px}
+.stats .st{display:flex;flex-direction:column;align-items:flex-start;width:auto;margin:0;padding:0;
+font:inherit;font-size:12px;color:var(--dim);background:none;border:0}
+.stats button.st{cursor:pointer}
+.stats button.st:hover{color:var(--ink);background:none}
+.stats b{font-size:17px;font-weight:600;color:var(--ink)}
+.bacts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}
+.bacts button{width:auto;margin:0;padding:7px 18px;font-size:13px}
+.bacts button.ghost{color:var(--ink);background:#262626}
+.bacts .note{font-size:12.5px;color:var(--dim)}
+.bacts a.note{color:var(--warn)}
+.ncard form.ask{margin:0 0 12px}
+.ncard form.ask[hidden]{display:none}
+.ncard form.ask button,.ncard .compose button,.ncard .setstatus button{width:auto;margin:8px 0 0;padding:7px 16px;font-size:13px}
+.ncard form.ask small{margin-top:6px}
+.agents{display:flex;flex-wrap:wrap;gap:8px}
+.agents .ag{display:flex;align-items:center;gap:6px;padding:3px 12px 3px 3px;font-size:12.5px;color:var(--soft);
+background:#1f1f1f;border-radius:999px}
+.bmk .mk{display:block;width:24px;height:24px;padding:5px;background:#2a2a2a;border-radius:50%}
+.ncard .setstatus{display:flex;gap:8px;margin:16px 0 0}
+.ncard .setstatus button{margin:0}
+.ncard .compose textarea{margin-top:8px}
+.ncard .compose .row2{display:flex;align-items:center;gap:10px}
+.ncard .compose .note{font-size:12.5px;color:#fca5a5}
+.posts .post,.feed .post{padding:10px 0;border-top:1px solid #222}
+.ncard .post p{margin:0 0 4px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+.ncard .post small{display:flex;gap:10px;align-items:center}
+.ncard .post .del{width:auto;margin:0;padding:0;font-size:12px;color:var(--dim);background:none}
+.ncard .post .del:hover{color:#fca5a5}
+.ncard .feed .who{padding:0 0 4px}
+.ncard .muted{font-size:13px;color:var(--dim)}
+.ncard .backto{width:auto;margin:0 0 6px;padding:4px 0;font-size:13px;color:var(--dim);background:none}
+.ncard .backto:hover{color:var(--ink);background:none}
+.ncard .who{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:6px 4px;font:inherit;
+font-size:13.5px;text-align:left;color:var(--soft);background:none;border:0;border-radius:8px}
+.ncard .who:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+.ncard .who .face{width:32px;height:32px;font-size:13px}
+.ncard details.edit{margin:14px 0 0}
+.ncard details.edit summary{cursor:pointer;font-size:12.5px;color:var(--dim)}
+.ncard details.edit[open] summary{margin-bottom:10px}
 h2 .mk{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
 h2{display:flex;align-items:center;gap:6px}
 @media (max-width:760px){.wrap.wide,.shell,.nav{min-width:0;max-width:100%}
@@ -282,10 +342,8 @@ function graph(person, agents, profiles) {
         x.state === "connected" ? "connected" : "waiting for them"} · your ${esc(a.name)} to their ${
         esc(x.name)}${x.at ? " · since " + day(x.at) : ""}</small>${cut}</div>`);
     }
-    const bio = pp.bio ? `<p class="bio">${esc(pp.bio)}</p>` : "";
-    cards.push(`<aside class="ncard" id="p${j}" hidden>${close}<div class="hd">${fc}<div><strong>` +
-      `${esc(label)}</strong><small>@${esc(h)}</small></div></div>${bio}<h3>Connected through</h3>` +
-      `${rows.join("")}</aside>`);
+    cards.push(`<aside class="ncard" id="p${j}" hidden>${close}<div class="bd" data-board="${esc(h)}">` +
+      `</div><h3>Connected through</h3>${rows.join("")}</aside>`);
     roster.push(`<button type="button" class="who" data-go="a${via[0][1]}-p${j}">${fc}<span>${esc(label)}` +
       `<small><span class="dot ${live ? "live" : "wait"}"></span>@${esc(h)}</small></span></button>`);
   });
@@ -298,7 +356,8 @@ function graph(person, agents, profiles) {
   const myface = face(photoOf(me, person.handle), me.name || person.handle);
   nodes.unshift(`<button type="button" class="node me" data-id="me" data-card="me">${myface}<span>` +
     `${esc(me.name) || "You"}</span></button>`);
-  cards.unshift(`<aside class="ncard me" id="me" hidden>${close}<form class="prof"><label class="ph" ` +
+  cards.unshift(`<aside class="ncard me" id="me" hidden>${close}<div class="bd" data-board="${
+    esc(person.handle)}"></div><details class="edit"><summary>Edit profile</summary><form class="prof"><label class="ph" ` +
     `title="Change your photo">${myface}<input type="file" accept="image/*" hidden><em>Change photo</em>` +
     `</label><input name="name" maxlength="60" value="${esc(me.name)}" placeholder="Your name" ` +
     `aria-label="Your name"><small>@${esc(person.handle)}</small><textarea name="bio" maxlength="280" ` +
@@ -306,18 +365,9 @@ function graph(person, agents, profiles) {
       esc(me.bio)}</textarea><label class="opt"><input type="checkbox" name="byname"${
       me.findable ? " checked" : ""}> Let people find me by name</label><input type="hidden" ` +
     `name="findable"><div class="save"><button>Save profile</button><span class="msg"></span></div>` +
-    `</form><h3>People · ${roster.length}</h3><div class="roster">${
+    `</form></details><h3>Connected · ${roster.length}</h3><div class="roster">${
       roster.join("") || "<p>No one yet. Find someone below.</p>"}</div></aside>`);
-  const opts = agents.map(a => `<option value="${esc(a.id)}">${esc(shownName(a.name))}</option>`).join("");
-  cards.push(`<aside class="ncard" id="found" hidden>${close}<div class="hd"><i class="face"></i><div>` +
-    `<strong></strong><small></small></div></div><p class="bio"></p><p class="state"></p><form ` +
-    `class="inv"><h3>Ask to connect</h3><textarea name="why" maxlength="200" rows="2" placeholder=` +
-    `"Why, in a few words: “dinner on Friday”" required></textarea><label>Through <select name="agent">${
-      opts}</select></label><button${opts ? "" : " disabled"}>Ask</button>${opts ? "" :
-      '<p class="none">Add an agent first: it is who talks with theirs.</p>'}</form><div class="done" ` +
-    `hidden><p></p><pre></pre><button type="button" class="cp">Copy invite</button></div></aside>`);
-  const hint = Object.keys(people).length ? "" : '<p class="hint">No connections yet. Search for ' +
-    "someone below, or ask your agent: “Reach @sam about dinner on Friday.”</p>";
+  cards.push(`<aside class="ncard" id="board" hidden>${close}<div class="bd"></div></aside>`);
   const find = '<form class="find" role="search" autocomplete="off"><svg viewBox="0 0 24 24" fill="none" ' +
     'stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/>' +
     '<path d="m16 16 4 4"/></svg><input type="search" name="q" autocomplete="off" autocapitalize="off" ' +
@@ -325,7 +375,7 @@ function graph(person, agents, profiles) {
     'someone by @handle or name" aria-label="Find someone by handle or name"></form>';
   return `<div class="graph" data-key="${esc(person.handle)}">${find}<div class="world"><svg ` +
     `class="edges" aria-hidden="true"></svg>${nodes.join("")}</div>${cards.join("")}<button ` +
-    `type="button" class="reset" hidden>Reset layout</button>${hint}</div>`;
+    `type="button" class="reset" hidden>Reset layout</button></div>`;
 }
 
 export function homePage({person, agents, note = "", start = null, sessions = [], log = [],
@@ -401,7 +451,7 @@ activity. People you talked with keep their own copy of what was said, as with e
   ];
   const first = start || (asked.length ? "requests" : !agents.length ? "add" : "connections");
   const main = views.map(([v, t, d, body]) => `<section class="view" id="${v}"${v === first ? "" : " hidden"}>
-<h1>${t}</h1><p>${d}</p>${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
+${v === "connections" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
   const top = views.map(([v, t, , , icon]) => `<a href="#${v}"${v === first ? ' aria-current="page"' : ""}${
     v === "requests" && asked.length ? ' class="pip"' : ""}>${icon}<span>${t}</span></a>`).join("");
   const bottom = `<form method="post" action="/signout"><button>${ICONS.signout}<span>Sign out</span>` +
@@ -411,7 +461,7 @@ activity. People you talked with keep their own copy of what was said, as with e
   if (a) a.click(); })();` : "";
   return page(`@${person.handle}`, `<div class="shell" data-start="${first}"><nav class="nav"
 aria-label="Dashboard"><div>${top}</div><div>${bottom}</div></nav><div class="main">${main}</div></div>`,
-    {kind: "start", step: "done", wide: true, frameScript: force});
+    {kind: "start", step: "done", wide: true, frameScript: force + BOARD});
 }
 
 export const pageFor = {copyBlock, memoryText};
@@ -422,3 +472,217 @@ export const handOver = (origin, handle, list) => list.map(a =>
   `Anyone with this link can act as this agent: keep it private, and replace it if it leaks.</p>` +
   copyBlock("Copy for " + shownName(a.name), memoryText(origin, handle, a), "mem")).join("") +
   `<form method="get" action="/home"><button>Continue</button></form>`;
+
+// -- the board: a person's profile in the canvas's panel, and the search pill's live suggestions --
+//
+// Every value from the server is set as text (textContent), never as HTML; only the agents' own
+// marks, static SVG from look.js, are inserted as markup.
+
+const KINDS = {muse: "Muse", "claude-code": "Claude Code"};
+const BOARD_MARKS = JSON.stringify(Object.fromEntries(Object.keys(KINDS).map(k => [k, MARKS[k]])
+  .concat([["agent", MARKS.agent || ""]]))).replace(/</g, "\\u003c");
+
+const BOARD = `
+(function(){
+  var g = document.querySelector(".graph"); if (!g) return;
+  var MK = ${BOARD_MARKS}, NAMES = ${JSON.stringify(KINDS)};
+  var h = function(tag, at, kids){
+    var e = document.createElement(tag);
+    Object.keys(at || {}).forEach(function(k){
+      var v = at[k]; if (v === null || v === undefined || v === false) return;
+      if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+      else if (k.slice(0, 2) === "on") e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+    });
+    (kids || []).forEach(function(c){ if (c) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return e;
+  };
+  var kind = function(n){ for (var k in NAMES) if (n === k || n.indexOf(k + "-") === 0) return k; return "agent"; };
+  var mark = function(n){ var s = h("span", {class: "bmk"}); s.innerHTML = MK[kind(n)] || MK.agent; return s; };
+  var face = function(photo, name, cls){
+    var i = h("i", {class: "face" + (cls ? " " + cls : "")});
+    if (photo) i.appendChild(h("img", {src: photo, alt: ""}));
+    else i.textContent = String(name || "?").replace(/^@/, "").slice(0, 1).toUpperCase();
+    return i;
+  };
+  var ago = function(t){
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 60 ? "now" : s < 3600 ? Math.round(s / 60) + "m" : s < 86400 ? Math.round(s / 3600) + "h" :
+      s < 30 * 86400 ? Math.round(s / 86400) + "d" : new Date(t).toISOString().slice(0, 10);
+  };
+  var back = function(r){ return r.json().then(function(j){ if (!r.ok) throw (j.error || "Something went wrong."); return j; }); };
+  var get = function(u){ return fetch(u, {credentials: "same-origin"}).then(back); };
+  var send = function(u, b){ return fetch(u, {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(b)}).then(back); };
+  var ME = g.dataset.key;
+
+  // -- a board ------------------------------------------------------------------------------
+  var render = function(el, handle){
+    el.dataset.showing = handle;
+    get("/home/board/" + encodeURIComponent(handle)).then(function(b){
+      if (el.dataset.showing === handle) draw(el, b);
+    }, function(err){ el.textContent = ""; el.appendChild(h("p", {class: "muted", text: String(err)})); });
+  };
+  var stat = function(n, label, fn){
+    return h(fn ? "button" : "div", {type: fn ? "button" : null, class: "st", onclick: fn},
+      [h("b", {text: String(n)}), label]);
+  };
+  var draw = function(el, b){
+    el.textContent = "";
+    el.appendChild(h("div", {class: "bhd"}, [face(b.photo, b.name || b.handle, "big"), h("div", {}, [
+      h("strong", {text: b.name || "@" + b.handle}),
+      h("small", {text: "@" + b.handle + (b.follows_you ? " · follows you" : "")}),
+      b.status ? h("p", {class: "status", text: b.status}) : null])]));
+    el.appendChild(h("div", {class: "stats"}, [stat(b.posts_n, b.posts_n === 1 ? "post" : "posts"),
+      stat(b.followers, b.followers === 1 ? "follower" : "followers", function(){ list(el, b, "followers"); }),
+      stat(b.following, "following", function(){ list(el, b, "following"); })]));
+    if (!b.self) actions(el, b);
+    if (b.bio) el.appendChild(h("p", {class: "bio", text: b.bio}));
+    if (b.agents.length) {
+      el.appendChild(h("h3", {text: "Agents"}));
+      el.appendChild(h("div", {class: "agents"}, b.agents.map(function(n){
+        return h("span", {class: "ag", title: "@" + b.handle + "/" + n}, [mark(n), NAMES[kind(n)] || n]); })));
+    }
+    if (b.self) compose(el, b);
+    el.appendChild(h("h3", {text: "Posts"}));
+    el.appendChild(h("div", {class: "posts"}, b.posts.length ? b.posts.map(function(x){
+      return h("div", {class: "post"}, [h("p", {text: x.text}), h("small", {}, [ago(x.at),
+        b.self ? h("button", {type: "button", class: "del", text: "Delete", onclick: function(){
+          send("/home/post-delete", {id: x.id}).then(function(){ render(el, b.handle); }); }}) : null])]);
+    }) : [h("p", {class: "muted", text: b.self ? "Nothing posted yet." : "No posts yet."})]));
+    if (b.self) feed(el);
+  };
+  var actions = function(el, b){
+    var row = h("div", {class: "bacts"});
+    row.appendChild(h("button", {type: "button", class: b.you_follow ? "ghost" : "",
+      text: b.you_follow ? "Following" : b.follows_you ? "Follow back" : "Follow", onclick: function(e){
+        e.target.disabled = true;
+        send("/home/follow", {handle: b.handle, on: !b.you_follow}).then(function(){ render(el, b.handle); },
+          function(err){ e.target.disabled = false; note.textContent = err; });
+      }}));
+    var note = h("span", {class: "note"});
+    if (b.link === "connected") note.textContent = "Your agents are connected";
+    else if (b.link === "asked") note.textContent = "Asked to connect · waiting for them";
+    else if (b.link === "asks-you") row.appendChild(h("a", {class: "note", href: "#requests",
+      text: "Wants to connect: see Requests", onclick: function(){
+        var a = document.querySelector('.nav a[href="#requests"]'); if (a) { a.click(); } }}));
+    else if (b.your_agents.length) row.appendChild(h("button", {type: "button", class: "ghost",
+      text: "Ask to connect", onclick: function(){ ask.hidden = !ask.hidden; }}));
+    else note.textContent = "Add an agent to connect with theirs";
+    row.appendChild(note);
+    el.appendChild(row);
+    var ask = h("form", {class: "ask", hidden: ""}, [
+      h("textarea", {name: "why", maxlength: "200", rows: "2", required: "",
+        placeholder: "Why, in a few words: “dinner on Friday”"}),
+      b.your_agents.length > 1 ? h("label", {}, ["Through ", h("select", {name: "agent"},
+        b.your_agents.map(function(a){ return h("option", {value: a.id, text: NAMES[kind(a.name)] ?
+          NAMES[kind(a.name)] + (a.name === kind(a.name) ? "" : " (" + a.name + ")") : a.name}); }))]) :
+        h("input", {type: "hidden", name: "agent", value: (b.your_agents[0] || {}).id || ""}),
+      h("button", {text: "Ask"}), h("small", {text: "Their human decides. Your agents can talk once they allow it."})]);
+    ask.addEventListener("submit", function(e){
+      e.preventDefault();
+      send("/home/invite", {agent: ask.elements.agent.value, person: b.handle, why: ask.elements.why.value})
+        .then(function(){ render(el, b.handle); }, function(err){ note.textContent = err; });
+    });
+    el.appendChild(ask);
+  };
+  var compose = function(el, b){
+    var st = h("form", {class: "setstatus"}, [h("input", {name: "status", maxlength: "100",
+      value: b.status || "", placeholder: "Set a status: what you're up to"}), h("button", {text: "Set"})]);
+    st.addEventListener("submit", function(e){ e.preventDefault();
+      send("/home/status", {status: st.elements.status.value}).then(function(){ render(el, b.handle); }); });
+    var said = h("span", {class: "note"});
+    var po = h("form", {class: "compose"}, [h("textarea", {name: "text", maxlength: "500", rows: "3",
+      placeholder: "Post something for your followers"}), h("div", {class: "row2"}, [h("button", {text: "Post"}), said])]);
+    po.addEventListener("submit", function(e){ e.preventDefault();
+      send("/home/post", {text: po.elements.text.value}).then(function(){ render(el, b.handle); },
+        function(err){ said.textContent = err; }); });
+    el.appendChild(st); el.appendChild(po);
+  };
+  var person = function(el, x, sub){
+    return h("button", {type: "button", class: "who", onclick: function(){ render(el, x.handle); }},
+      [face(x.photo, x.name || x.handle), h("span", {}, [x.name || "@" + x.handle,
+        h("small", {text: sub || "@" + x.handle + (x.status ? " · " + x.status : "")})])]);
+  };
+  var list = function(el, b, which){
+    el.textContent = "";
+    el.appendChild(h("button", {type: "button", class: "backto", text: "← " + (b.name || "@" + b.handle),
+      onclick: function(){ render(el, b.handle); }}));
+    el.appendChild(h("h3", {text: which === "followers" ? "Followers" : "Following"}));
+    var box = h("div", {class: "roster"}); el.appendChild(box);
+    get("/home/follows/" + encodeURIComponent(b.handle) + "?kind=" + which).then(function(xs){
+      if (!xs.length) box.appendChild(h("p", {class: "muted", text: "No one yet."}));
+      xs.forEach(function(x){ box.appendChild(person(el, x)); });
+    });
+  };
+  var feed = function(el){
+    el.appendChild(h("h3", {text: "From people you follow"}));
+    var box = h("div", {class: "feed"}); el.appendChild(box);
+    get("/home/feed").then(function(xs){
+      if (!xs.length) box.appendChild(h("p", {class: "muted", text: "Follow people to see their posts here."}));
+      xs.forEach(function(x){
+        box.appendChild(h("div", {class: "post"}, [person(el, x, "@" + x.handle + " · " + ago(x.at)),
+          h("p", {text: x.text})]));
+      });
+    });
+  };
+
+  // a panel with a board opens: the board is drawn fresh
+  var boards = g.querySelectorAll(".ncard .bd[data-board]");
+  new MutationObserver(function(ms){
+    ms.forEach(function(m){
+      var bd = m.target.querySelector(".bd[data-board]");
+      if (bd && !m.target.hidden) render(bd, bd.dataset.board);
+    });
+  }).observe(g, {subtree: true, attributes: true, attributeFilter: ["hidden"]});
+  var panel = document.getElementById("board"), pbd = panel && panel.querySelector(".bd");
+  var open = function(handle){
+    if (handle === ME) { g.openCard("me"); return; }
+    var node = g.querySelector(".node.peer[data-addr='" + handle.replace(/[^a-z0-9-]/g, "") + "']");
+    if (node) { node.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true})); return; }
+    render(pbd, handle); g.openCard("board");
+  };
+
+  // -- the search pill's live suggestions, above it ------------------------------------------
+  var form = g.querySelector(".find"), input = form.elements.q;
+  var box = h("div", {class: "sugg", role: "listbox", hidden: ""});
+  form.appendChild(box);
+  var items = [], sel = -1, timer = null, seq = 0;
+  var hide = function(){ box.hidden = true; items = []; sel = -1; };
+  var mark_ = function(){ [].forEach.call(box.querySelectorAll(".opt"), function(o, i){ o.classList.toggle("on", i === sel); }); };
+  var choose = function(i){ var x = items[i]; if (!x) return; hide(); input.value = ""; input.blur(); open(x.handle); };
+  var show = function(xs, q){
+    box.textContent = ""; items = xs; sel = xs.length ? 0 : -1;
+    if (!xs.length) box.appendChild(h("p", {class: "none", text: "No one matches “" + q + "”"}));
+    xs.forEach(function(x, i){
+      box.appendChild(h("button", {type: "button", class: "opt" + (i === sel ? " on" : ""), role: "option",
+        onmousedown: function(e){ e.preventDefault(); choose(i); }, onmouseenter: function(){ sel = i; mark_(); }},
+        [face(x.photo, x.name || x.handle), h("span", {}, [h("b", {text: x.name || "@" + x.handle}),
+          h("small", {text: "@" + x.handle + (x.handle === ME ? " · you" : x.status ? " · " + x.status : "")})])]));
+    });
+    box.hidden = false;
+  };
+  input.addEventListener("input", function(){
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (!q) { hide(); return; }
+    timer = setTimeout(function(){
+      var my = ++seq;
+      get("/home/suggest?q=" + encodeURIComponent(q)).then(function(xs){ if (my === seq && input.value.trim()) show(xs, q); },
+        function(err){ if (my === seq) { box.textContent = ""; box.appendChild(h("p", {class: "none", text: String(err)})); box.hidden = false; } });
+    }, 120);
+  });
+  input.addEventListener("keydown", function(e){
+    if (box.hidden) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); if (!items.length) return;
+      sel = (sel + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length; mark_();
+    } else if (e.key === "Escape") hide();
+  });
+  input.addEventListener("blur", function(){ setTimeout(hide, 150); });
+  input.addEventListener("focus", function(){ if (input.value.trim()) input.dispatchEvent(new Event("input")); });
+  g.addEventListener("submit", function(e){          // before look.js: Enter picks a suggestion
+    if (e.target !== form) return;
+    e.preventDefault(); e.stopPropagation();
+    if (sel >= 0) choose(sel);
+  }, true);
+})();`;
