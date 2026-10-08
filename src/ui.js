@@ -41,7 +41,7 @@ src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}
     "x-content-type-options": "nosniff", ...headers,
     "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src ` +
       `'nonce-${nonce}'${c}${clerk ? " https://challenges.cloudflare.com" : ""}; img-src 'self' ` +
-      `data: https://ai-andromeda.com${clerk ? " https://img.clerk.com" : ""}; connect-src 'self'${c}; ` +
+      `data: blob: https://ai-andromeda.com${clerk ? " https://img.clerk.com" : ""}; connect-src 'self'${c}; ` +
       `frame-src${clerk ? " https://challenges.cloudflare.com" : frameScript ? " 'self'" : " 'none'"}; worker-src 'self' blob:; ` +
       `form-action 'self'; base-uri 'none'; frame-ancestors 'none'`}});
 }
@@ -84,6 +84,11 @@ font:inherit;font-size:13.5px;color:var(--soft);background:none;border:0;border-
 .bd:empty{min-height:120px}
 .bhd{display:flex;align-items:center;gap:14px;margin:0 30px 14px 0}
 .bhd .face.big{width:68px;height:68px;font-size:26px}
+.bhd .ph{position:relative;display:block;flex:none;width:68px;height:68px;margin:0;cursor:pointer}
+.bhd .ph em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;
+font-style:normal;color:#fff;background:rgba(0,0,0,.55);border-radius:50%;opacity:0;transition:opacity .15s}
+.bhd .ph:hover em,.bhd .ph.empty em{opacity:1}
+.bhd .note{display:block;margin-top:4px;font-size:12px;color:#fca5a5}
 .bhd strong{font-size:17px}
 .bhd .status{margin:6px 0 0;font-size:13px;color:var(--soft)}
 .stats{display:flex;gap:22px;margin:0 0 14px}
@@ -526,12 +531,41 @@ const BOARD = `
     return h(fn ? "button" : "div", {type: fn ? "button" : null, class: "st", onclick: fn},
       [h("b", {text: String(n)}), label]);
   };
+  var photoPicker = function(el, b){      // your face: click to pick a photo, saved at once
+    var said = h("span", {class: "note"});
+    var pick = h("input", {type: "file", accept: "image/*", hidden: ""});
+    var lab = h("label", {class: "ph" + (b.photo ? "" : " empty"), title: "Change your photo"}, [face(b.photo, b.name || b.handle, "big"),
+      h("em", {text: b.photo ? "Change" : "Add photo"}), pick]);
+    pick.addEventListener("change", function(){
+      var file = pick.files[0]; if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function(){
+        var img = new Image();
+        img.onload = function(){
+          var c = document.createElement("canvas"), n = 256, side = Math.min(img.width, img.height);
+          c.width = c.height = n;
+          c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, n, n);
+          var data = c.toDataURL("image/jpeg", 0.85);
+          send("/home/profile", {photo: data}).then(function(){
+            var me = g.querySelector(".node.me i");
+            if (me) { me.textContent = ""; me.appendChild(h("img", {src: data, alt: ""})); }
+            render(el, b.handle);
+          }, function(err){ said.textContent = err; });
+        };
+        img.onerror = function(){ said.textContent = "That picture can't be read here: try a JPEG or PNG."; };
+        img.src = rd.result;
+      };
+      rd.readAsDataURL(file);
+    });
+    return [lab, said];
+  };
   var draw = function(el, b){
     el.textContent = "";
-    el.appendChild(h("div", {class: "bhd"}, [face(b.photo, b.name || b.handle, "big"), h("div", {}, [
+    var pp = b.self ? photoPicker(el, b) : [face(b.photo, b.name || b.handle, "big"), null];
+    el.appendChild(h("div", {class: "bhd"}, [pp[0], h("div", {}, [
       h("strong", {text: b.name || "@" + b.handle}),
       h("small", {text: "@" + b.handle + (b.follows_you ? " · follows you" : "")}),
-      b.status ? h("p", {class: "status", text: b.status}) : null])]));
+      b.status ? h("p", {class: "status", text: b.status}) : null, pp[1]])]));
     el.appendChild(h("div", {class: "stats"}, [stat(b.posts_n, b.posts_n === 1 ? "post" : "posts"),
       stat(b.followers, b.followers === 1 ? "follower" : "followers", function(){ list(el, b, "followers"); }),
       stat(b.following, "following", function(){ list(el, b, "following"); })]));

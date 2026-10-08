@@ -906,8 +906,11 @@ async function canvasRoute(req, env, url) {
         return json({error: "The photo is a JPEG, at most 150 KB."}, 400);
       await call(dir(env), "/photo-set", {handle: person.handle, data});
     }
-    await call(dir(env), "/profile", {handle: person.handle, name: clean(f.name, 60) || person.name,
-      bio: clean(f.bio, 280), findable: f.findable_by_name !== false});
+    // only the fields sent change: a photo alone keeps the name, bio and findability
+    await call(dir(env), "/profile", {handle: person.handle,
+      name: "name" in f ? clean(f.name, 60) || person.name : person.name,
+      bio: "bio" in f ? clean(f.bio, 280) : person.bio,
+      findable: typeof f.findable_by_name === "boolean" ? f.findable_by_name : !!person.findable});
     await audit(env, req, ses.clerk, f.photo ? "Changed the profile and photo" : "Changed the profile");
     return json({ok: true});
   }
