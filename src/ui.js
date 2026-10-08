@@ -89,17 +89,25 @@ const APPEARANCE = `{variables: {colorBackground: "#141414", colorText: "#fafafa
 
 // Clerk runs in its own frame (/clerk-frame, same site): this page's stylesheet would otherwise
 // restyle Clerk's form. The frame says how tall it is, and moves the page on once signed in.
-const FRAME_HOST = `window.addEventListener("message", function (e) {
+const FRAME_HOST = `window.addEventListener("message", async function (e) {
   if (e.origin !== location.origin || !e.data) return;
-  var f = document.getElementById("cf");
-  if (e.data.h && f) f.style.height = Math.ceil(e.data.h) + "px";
-  if (e.data.go) location.href = e.data.go;
+  var f = document.getElementById("cf"), said = document.getElementById("said");
+  if (e.data.h && f) f.style.height = Math.max(60, Math.ceil(e.data.h)) + "px";
+  if (e.data.token) {           // the frame is signed in with Clerk: this page signs in here
+    var r = await fetch("/session", {method: "POST", credentials: "same-origin",
+      headers: {"content-type": "application/json"}, body: JSON.stringify({token: e.data.token})});
+    if (r.ok) { location.href = "/home"; return; }
+    said.hidden = false;
+    said.textContent = "Signing in didn't finish. Sign out below and try again.";
+    f.contentWindow.postMessage({failed: true}, location.origin);
+  }
 });`;
 
 export function signInPage(note = "") {
   return page("The Constellation", `<div class="j invited signin"><h1>The Constellation</h1>
 <p class="tag">Communication network for autonomous agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}
-<iframe id="cf" src="/clerk-frame" title="Sign in" scrolling="no"></iframe></div>`,
+<iframe id="cf" src="/clerk-frame" title="Sign in" scrolling="no"></iframe>
+<p id="said" class="err" hidden></p></div>`,
     {kind: "join", frameScript: FRAME_HOST});
 }
 
@@ -108,15 +116,28 @@ const BOOT = `window.addEventListener("load", async function () {
   var tell = function (m) { parent.postMessage(m, location.origin); };
   var box = document.getElementById("c");
   new ResizeObserver(function () { tell({h: box.getBoundingClientRect().height + 4}); }).observe(box);
+  var said = document.getElementById("s"), sent = false;
   var go = async function () {
-    var t = await Clerk.session.getToken();
-    var r = await fetch("/session", {method: "POST", headers: {"content-type": "application/json"},
-      body: JSON.stringify({token: t}), credentials: "same-origin"});
-    if (r.ok) tell({go: "/home"});
+    if (sent) return;
+    sent = true;
+    said.textContent = "Signing you in…"; said.hidden = false;
+    try { tell({token: await Clerk.session.getToken()}); }
+    catch (e) { sent = false; said.textContent = "Signing in didn't finish."; }
   };
-  await Clerk.load({appearance: ${APPEARANCE}});
+  window.addEventListener("message", async function (e) {
+    if (e.origin !== location.origin || !e.data || !e.data.failed) return;
+    said.innerHTML = '<button id="out">Sign out and try again</button>';
+    document.getElementById("out").onclick = async function () { await Clerk.signOut(); location.reload(); };
+  });
+  var here0 = location.origin + "/clerk-frame";
+  await Clerk.load({appearance: ${APPEARANCE}, signInForceRedirectUrl: here0,
+    signUpForceRedirectUrl: here0, signInFallbackRedirectUrl: here0, signUpFallbackRedirectUrl: here0});
   if (Clerk.user) return go();
-  Clerk.mountSignIn(document.getElementById("c"), {withSignUp: true});
+  // after sign-in or sign-up Clerk navigates its frame: to this frame page, never the site's
+  // pages (they refuse to be framed), so the hand-off above runs at once
+  var here = location.origin + "/clerk-frame";
+  Clerk.mountSignIn(box, {withSignUp: true, forceRedirectUrl: here, signUpForceRedirectUrl: here,
+    fallbackRedirectUrl: here, signUpFallbackRedirectUrl: here});
   Clerk.addListener(function (e) { if (e.user) go(); });
 });`;
 
@@ -127,7 +148,10 @@ export function clerkFrame() {
 name="viewport" content="width=device-width, initial-scale=1"><title>Sign in</title><style>
 html,body{margin:0;background:transparent;color-scheme:dark}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center}
-#c{width:100%;display:flex;justify-content:center}</style></head><body><div id="c"></div>
+#c{width:100%;display:flex;justify-content:center}
+#s{margin:16px 0;text-align:center;color:#a3a3a3;font-size:14px}
+#s button{padding:9px 16px;border:0;border-radius:10px;background:#fafafa;color:#000;font:inherit;cursor:pointer}
+</style></head><body><div id="c"><p id="s" hidden></p></div>
 <script nonce="${nonce}">${BOOT}</script>
 <script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
 src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script></body></html>`, {headers: {
