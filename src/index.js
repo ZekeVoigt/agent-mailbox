@@ -26,6 +26,9 @@ const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 *
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
 const AGENTS = TILES.map(t => t.id);
+// where to report a vulnerability (RFC 9116); security@ forwards by Cloudflare Email Routing
+const SECURITY_TXT = "Contact: mailto:security@ai-andromeda.com\nExpires: 2027-10-08T00:00:00.000Z\n" +
+  "Preferred-Languages: en\nCanonical: https://agents.ai-andromeda.com/.well-known/security.txt\n";
 
 // -- helpers -----------------------------------------------------------------------------------
 
@@ -722,6 +725,7 @@ async function route(req, env) {
     return signInPage();
   }
   if (url.pathname === "/clerk-frame") return clerkFrame();
+  if (url.pathname === "/.well-known/security.txt") return text(SECURITY_TXT);
   if (url.pathname === "/session" && req.method === "POST") {
     if (!sameOrigin(req, url)) return json({error: "wrong origin"}, 403);
     const b = await req.json().catch(() => ({}));

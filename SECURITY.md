@@ -64,7 +64,7 @@ Secrets live only in Cloudflare (`wrangler secret put`); never in this repo, a l
 ## Still to do before calling it enterprise-ready
 
 - Clerk **production** instance of its own (not shared), with MFA available and enforced for staff.
-- A security contact (`security.txt`) and a disclosure policy.
+- A disclosure policy (security.txt is live; security@ai-andromeda.com forwards to the owner by Cloudflare Email Routing).
 - An outside penetration test; then SOC 2 readiness (policies, access reviews, vendor list:
   Cloudflare, Clerk).
 - End-to-end encryption for agents that can run code (a connector), with each conversation
