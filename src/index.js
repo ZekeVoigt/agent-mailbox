@@ -1,7 +1,7 @@
 // The Constellation (new architecture): agents talk to agents through private web links. Any agent that can open a URL can
 // join: no MCP, no connector, no account login. A person signs up once and gets
 //   - one private link per agent   /a/<secret>   (paste it in the agent's memory)
-//   - one owner page for the human /o/<secret>   (approve requests, cut, revoke links)
+//   - a dashboard for the human, /home, signed in with Clerk (approve requests, cut, links)
 // A person is found by @handle or name. Strangers reach each other by a request that only the
 // recipient side can accept; then the two agents message both ways, with receipts.
 //
@@ -11,7 +11,8 @@
 // Agent Durable Object per agent (its conversations, requests, presence). HTTPS throughout,
 // storage encrypted at rest by Cloudflare; whoever runs this Worker can read messages.
 
-import {TILES, esc as escHtml, joinPage, joinedPage, homePage, memoryText} from "./ui.js";
+import {TILES, homePage, signInPage, signedOutPage, onboardPage, handOver} from "./ui.js";
+import {verifyClerk, clerkUser, sessionCookie, sessionOf, clearCookie} from "./auth.js";
 
 const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
@@ -63,12 +64,15 @@ const call = async (stub, path, body) => (await stub.fetch("https://do" + path, 
 
 export class Directory {
   constructor(state) {
+    this.state = state;
     this.sql = state.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS person (handle TEXT PRIMARY KEY, name TEXT,
         bio TEXT, owner TEXT UNIQUE, findable INTEGER DEFAULT 1, primary_agent TEXT, at INTEGER);
       CREATE TABLE IF NOT EXISTS agent (id TEXT PRIMARY KEY, handle TEXT, name TEXT,
         link TEXT UNIQUE, at INTEGER);
       CREATE TABLE IF NOT EXISTS signup (ip TEXT, at INTEGER);`);
+    try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
+    this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
   all(q, ...a) { return this.sql.exec(q, ...a).toArray(); }
@@ -88,6 +92,32 @@ export class Directory {
       for (const a of b.agents)
         this.sql.exec("INSERT INTO agent VALUES (?, ?, ?, ?, ?)", a.id, b.handle, a.name,
           a.link, now);
+      return json({ok: true});
+    }
+    if (p === "/by-clerk") {
+      const person = this.one("SELECT * FROM person WHERE clerk = ?", b.clerk);
+      if (!person) return json(null);
+      person.agents = this.all("SELECT id, name FROM agent WHERE handle = ? " +
+        "ORDER BY id != ?, at, name", person.handle, person.primary_agent);
+      return json(person);
+    }
+    if (p === "/claim") {             // an account from before Clerk: its owner link binds it once
+      const person = this.one("SELECT handle, clerk FROM person WHERE owner = ?", b.owner);
+      if (!person) return json({error: "That link doesn't work."}, 404);
+      if (person.clerk && person.clerk !== b.clerk)
+        return json({error: "That account already belongs to another sign-in."}, 409);
+      if (this.one("SELECT 1 FROM person WHERE clerk = ? AND handle != ?", b.clerk, person.handle))
+        return json({error: "You already have an account here."}, 409);
+      this.sql.exec("UPDATE person SET clerk = ? WHERE handle = ?", b.clerk, person.handle);
+      return json({ok: true, handle: person.handle});
+    }
+    if (p === "/join") {              // a signed-in Clerk user picks their handle
+      if (this.one("SELECT 1 FROM person WHERE clerk = ?", b.clerk)) return json({ok: true});
+      if (this.one("SELECT 1 FROM person WHERE handle = ?", b.handle))
+        return json({error: `@${b.handle} is taken: try another.`, field: "handle"}, 409);
+      this.sql.exec("INSERT INTO person (handle, name, bio, owner, findable, primary_agent, at, " +
+        "clerk) VALUES (?, ?, '', ?, 1, NULL, ?, ?)", b.handle, b.name, "clerk:" + b.clerk, now,
+        b.clerk);
       return json({ok: true});
     }
     if (p === "/by-link") return json(this.one(
@@ -119,6 +149,12 @@ export class Directory {
     if (p === "/add-agents") {
       for (const a of b.agents)
         this.sql.exec("INSERT INTO agent VALUES (?, ?, ?, ?, ?)", a.id, b.handle, a.name, a.link, now);
+      // the first Muse (else the first agent) is who @handle reaches
+      const prim = this.one("SELECT primary_agent FROM person WHERE handle = ?", b.handle);
+      if (prim && !prim.primary_agent) {
+        const pick = b.agents.find(a => a.name === "muse") || b.agents[0];
+        this.sql.exec("UPDATE person SET primary_agent = ? WHERE handle = ?", pick.id, b.handle);
+      }
       return json({ok: true});
     }
     if (p === "/rotate") {
@@ -132,7 +168,12 @@ export class Directory {
       this.sql.exec("DELETE FROM person WHERE handle = ?", b.handle);
       return json({deleted: n});
     }
-    if (p === "/list") return json(this.all("SELECT handle, name, at FROM person ORDER BY at"));
+    if (p === "/restore") {           // the operator's undo: the whole directory as it was at `at`
+      const bm = await this.state.storage.getBookmarkForTime(b.at);
+      await this.state.storage.onNextSessionRestoreBookmark(bm);
+      this.state.abort("restoring");
+    }
+    if (p === "/list") return json(this.all("SELECT handle, name, at, clerk FROM person ORDER BY at"));
     if (p === "/profile") {
       this.sql.exec("UPDATE person SET name = ?, bio = ?, findable = ? WHERE handle = ?",
         b.name, b.bio, b.findable ? 1 : 0, b.handle);
@@ -400,26 +441,7 @@ export class Agent {
   }
 }
 
-// -- the human's pages (ui.js draws them) -------------------------------------------------------
-
-async function signup(req, env, url) {
-  const fd = await req.formData(), f = Object.fromEntries(fd.entries());
-  const agents = [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a));
-  const name = clean(f.name, 60), handle = String(f.handle || "").trim().toLowerCase();
-  const form = {name, handle, agents};
-  if (!name) return joinPage(form, "Add your name.", "name");
-  if (!HANDLE_RE.test(handle)) return joinPage(form, "3 to 30 lowercase letters, digits or dashes.", "handle");
-  if (!agents.length) return joinPage(form, "Pick at least one agent.");
-  const owner = secret(28), made = agents.map(n => ({id: crypto.randomUUID(), name: n, link: secret()}));
-  const got = await call(dir(env), "/signup", {ip: req.headers.get("cf-connecting-ip") || "?",
-    handle, name, owner: await digest(owner),
-    agents: await Promise.all(made.map(async a => ({id: a.id, name: a.name, link: await digest(a.link)})))});
-  if (got.error) return joinPage(form, got.error, got.field || "");
-  for (const a of made)
-    await call(agentObj(env, a.id), "/init", {id: a.id, handle, name: a.name, person: name});
-  await linkOwn(env, handle, made);
-  return joinedPage(url.origin, handle, owner, made);
-}
+// -- the human's pages (ui.js draws them; Clerk signs people in, auth.js) -----------------------
 
 async function linkOwn(env, handle, agents) {     // a person's own agents: connected, no request
   for (let i = 0; i < agents.length; i++) for (let j = i + 1; j < agents.length; j++)
@@ -427,50 +449,68 @@ async function linkOwn(env, handle, agents) {     // a person's own agents: conn
       JSON.stringify({to: `@${handle}/${agents[j].name}`, why: "Your own agents", base: ""})});
 }
 
-async function home(env, url, owner, note = "", start = null) {
-  const person = await call(dir(env), "/by-owner", {owner: await digest(owner)});
-  if (!person) return joinPage({}, "That link doesn't work: it was mistyped, or replaced.");
+async function home(env, person, note = "", start = null) {
   const agents = [];
   for (const a of person.agents) {
     const st = await call(agentObj(env, a.id), "/status");
     agents.push({id: a.id, name: a.name, seen: st.seen, peers: st.peers});
   }
-  return homePage({origin: url.origin, owner, person, agents, note, start});
+  return homePage({person, agents, note, start});
 }
 
-async function ownerAction(req, env, url, owner) {
+async function getHome(req, env) {
+  const clerk = await sessionOf(env, req);
+  if (!clerk) return Response.redirect(new URL("/", req.url).toString(), 303);
+  const person = await call(dir(env), "/by-clerk", {clerk});
+  if (!person) {
+    const u = await clerkUser(env, clerk);
+    const handle = (u.username || u.email.split("@")[0] || "").toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 30);
+    return onboardPage({name: u.name, handle});
+  }
+  return home(env, person);
+}
+
+async function postHome(req, env, url) {
+  const clerk = await sessionOf(env, req);
+  if (!clerk) return Response.redirect(`${url.origin}/`, 303);
   const fd = await req.formData(), f = Object.fromEntries(fd.entries());
-  const person = await call(dir(env), "/by-owner", {owner: await digest(owner)});
-  if (!person) return home(env, url, owner);
-  const back = view => Response.redirect(`${url.origin}/o/${owner}#${view}`, 303);
-  const mine = id => person.agents.find(a => a.id === id);
+  const back = view => Response.redirect(`${url.origin}/home#${view}`, 303);
+  if (f.do === "onboard") {
+    const name = clean(f.name, 60), handle = String(f.handle || "").trim().toLowerCase();
+    if (!name) return onboardPage({name, handle}, "Add your name.", "name");
+    if (!HANDLE_RE.test(handle))
+      return onboardPage({name, handle}, "3 to 30 lowercase letters, digits or dashes.", "handle");
+    const got = await call(dir(env), "/join", {clerk, handle, name});
+    if (got.error) return onboardPage({name, handle}, got.error, got.field || "");
+    return back("add");
+  }
+  const person = await call(dir(env), "/by-clerk", {clerk});
+  if (!person) return Response.redirect(`${url.origin}/home`, 303);
   if (f.do === "profile") {
     await call(dir(env), "/profile", {handle: person.handle, name: clean(f.name, 60) || person.name,
       bio: clean(f.bio, 280), findable: f.findable === "1"});
     return back("profile");
   }
   if (f.do === "add") {
-    const names = new Set(person.agents.map(a => a.name));
-    const made = [];
+    const names = new Set(person.agents.map(a => a.name)), made = [];
     for (const t of [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a))) {
       let n = t, k = 2;
       while (names.has(n)) n = `${t}-${k++}`;
       names.add(n);
       made.push({id: crypto.randomUUID(), name: n, link: secret()});
     }
-    if (!made.length) return home(env, url, owner, "Pick an agent to add.", "add");
+    if (!made.length) return home(env, person, "<p>Pick an agent to add.</p>", "add");
     await call(dir(env), "/add-agents", {handle: person.handle, agents: await Promise.all(
       made.map(async a => ({id: a.id, name: a.name, link: await digest(a.link)})))});
     for (const a of made)
       await call(agentObj(env, a.id), "/init", {id: a.id, handle: person.handle, name: a.name,
         person: person.name});
     await linkOwn(env, person.handle, [...person.agents, ...made]);
-    return home(env, url, owner, made.map(a => `<p>Paste this into ${escHtml(a.name)}'s memory:</p>` +
-      `<div class="paste"><pre class="mem">${escHtml(memoryText(url.origin, person.handle, a))}</pre>` +
-      `<button type="button" class="go" data-copy="${escHtml(memoryText(url.origin, person.handle, a))}">Copy</button></div>`).join(""),
-      "agents");
+    const fresh = await call(dir(env), "/by-clerk", {clerk});
+    return home(env, fresh, handOver(url.origin, person.handle, made), "agents");
   }
-  const a = mine(f.agent);
+  const a = person.agents.find(x => x.id === f.agent);
   if (!a) return back("connections");
   const stub = agentObj(env, a.id);
   if (f.do === "accept" || f.do === "decline") {
@@ -481,10 +521,8 @@ async function ownerAction(req, env, url, owner) {
   if (f.do === "rotate") {
     const link = secret();
     await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: await digest(link)});
-    const m = memoryText(url.origin, person.handle, {name: a.name, link});
-    return home(env, url, owner, `<p>${escHtml(a.name)}'s old link stopped working. Paste this ` +
-      `into its memory:</p><div class="paste"><pre class="mem">${escHtml(m)}</pre><button ` +
-      `type="button" class="go" data-copy="${escHtml(m)}">Copy</button></div>`, "agents");
+    return home(env, person, `<p>${a.name}'s old link stopped working.</p>` +
+      handOver(url.origin, person.handle, [{name: a.name, link}]), "agents");
   }
   return back("connections");
 }
@@ -493,10 +531,23 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url), parts = url.pathname.split("/").filter(Boolean);
     const q = Object.fromEntries(url.searchParams.entries());
-    if (["/", "/join", "/start"].includes(url.pathname)) {
-      if (req.method === "POST") return signup(req, env, url);
-      return joinPage();
+    if (["/", "/join", "/start", "/signin"].includes(url.pathname)) {
+      if (await sessionOf(env, req)) return Response.redirect(`${url.origin}/home`, 303);
+      return signInPage();
     }
+    if (url.pathname === "/session" && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      const user = await verifyClerk(b.token);
+      if (!user) return json({error: "not signed in"}, 401);
+      return new Response(JSON.stringify({next: "/home"}), {headers: {"content-type":
+        "application/json", "cache-control": "no-store", "set-cookie": await sessionCookie(env, user)}});
+    }
+    if (url.pathname === "/signout" && req.method === "POST") {
+      const r = signedOutPage();
+      r.headers.append("set-cookie", clearCookie);
+      return r;
+    }
+    if (url.pathname === "/home") return req.method === "POST" ? postHome(req, env, url) : getHome(req, env);
     if (parts[0] === "a" && SECRET_RE.test(parts[1] || "")) {
       const who = await call(dir(env), "/by-link", {link: await digest(parts[1])});
       if (!who) return text("That link doesn't work (replaced or mistyped).", 404);
@@ -508,13 +559,21 @@ export default {
       return agentObj(env, who.id).fetch("https://do/" + verb, {method: "POST", body: JSON.stringify(body)});
     }
     if (parts[0] === "o" && SECRET_RE.test(parts[1] || "")) {
-      if (req.method === "POST") return ownerAction(req, env, url, parts[1]);
-      return home(env, url, parts[1]);
+      // a private page link from before Clerk: signed in, it moves that account to this sign-in
+      const clerk = await sessionOf(env, req);
+      if (!clerk) return signInPage("Sign in first; then open your old page link again to keep your account.");
+      const got = await call(dir(env), "/claim", {owner: await digest(parts[1]), clerk});
+      if (got.error) return onboardPage({}, got.error);
+      return Response.redirect(`${url.origin}/home`, 303);
     }
     if (parts[0] === "admin" && req.method === "POST") {   // the operator only
       if (!env.ADMIN || req.headers.get("x-admin") !== env.ADMIN) return text("Not allowed.", 403);
       const b = await req.json().catch(() => ({}));
       if (parts[1] === "list") return json(await call(dir(env), "/list", {}));
+      if (parts[1] === "restore" && Number(b.at) > 0) {
+        try { await call(dir(env), "/restore", {at: Number(b.at)}); } catch {}
+        return json({restored: Number(b.at)});
+      }
       if (parts[1] === "delete" && HANDLE_RE.test(b.handle || ""))
         return json(await call(dir(env), "/delete", {handle: b.handle}));
       return text("Unknown.", 404);
