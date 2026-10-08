@@ -1,0 +1,16 @@
+{
+  // Agent mailbox: two agents talk through links only (src/index.js).
+  // Publish: npx wrangler deploy   (logged in with `wrangler login`, not CLOUDFLARE_API_TOKEN)
+  "name": "agent-mailbox",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "routes": [{ "pattern": "agents.ai-andromeda.com", "custom_domain": true }],
+  "durable_objects": { "bindings": [
+    { "name": "BOX", "class_name": "Box" },
+    { "name": "DIR", "class_name": "Directory" },
+    { "name": "AGENT", "class_name": "Agent" }] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Box"] },
+    { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }]
+}
