@@ -1,17 +1,14 @@
-// Signing in: Clerk proves who the person is once; then this site keeps its own session.
+// Signing in: Clerk proves who the person is once; then this site keeps its own session
+// (index.js: an opaque cookie whose digest the directory holds, revocable).
 //
 // The page runs Clerk's sign-in, then POSTs Clerk's session token to /session. Here it is
 // checked -- RS256 under the key Clerk publishes for this instance (its JWKS), not expired, from
-// this instance (`iss`) -- and the browser gets this site's own cookie: `cx`, the Clerk user id
-// and an expiry, HMAC-signed with SESSION_KEY, HttpOnly, 30 days. So a form post never meets an
-// expired 60-second Clerk token.
+// this instance (`iss`). "Sign out everywhere" and deleting an account also end the person's
+// Clerk sessions, so no browser can quietly sign back in.
 
 export const CLERK_FAPI = "https://included-rattler-20.clerk.accounts.dev";
 export const CLERK_PK = "pk_test_aW5jbHVkZWQtcmF0dGxlci0yMC5jbGVyay5hY2NvdW50cy5kZXYk";
-const COOKIE = "cx", DAYS = 30;
 
-const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf)))
-  .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") +
   "===".slice((s.length + 3) % 4)), c => c.charCodeAt(0));
 const utf8 = s => new TextEncoder().encode(s);
@@ -57,30 +54,16 @@ export async function clerkUser(env, id) {
   } catch { return {}; }
 }
 
-async function hmac(env, data) {
-  const key = await crypto.subtle.importKey("raw", utf8(env.SESSION_KEY),
-    {name: "HMAC", hash: "SHA-256"}, false, ["sign"]);
-  return b64u(await crypto.subtle.sign("HMAC", key, utf8(data)));
-}
-
-export async function sessionCookie(env, userId) {
-  const exp = Math.floor(Date.now() / 1000) + DAYS * 86400, data = `${userId}.${exp}`;
-  return `${COOKIE}=${data}.${await hmac(env, data)}; Path=/; HttpOnly; Secure; SameSite=Lax; ` +
-    `Max-Age=${DAYS * 86400}`;
-}
-export const clearCookie = `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-
-/** The Clerk user id this browser is signed in as, or null. */
-export async function sessionOf(env, req) {
-  const m = /(?:^|;\s*)cx=([^;]+)/.exec(req.headers.get("cookie") || "");
-  if (!m) return null;
-  const parts = m[1].split(".");
-  if (parts.length !== 3) return null;
-  const [user, exp, sig] = parts;
-  if (!(Number(exp) > Date.now() / 1000)) return null;
-  const want = await hmac(env, `${user}.${exp}`);
-  if (want.length !== sig.length) return null;
-  let diff = 0;
-  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ sig.charCodeAt(i);
-  return diff === 0 ? user : null;
+/** Ends every active Clerk session of this user (sign out everywhere). */
+export async function revokeClerkSessions(env, id) {
+  const auth = {authorization: `Bearer ${env.CLERK_SECRET_KEY}`};
+  try {
+    const r = await fetch(`https://api.clerk.com/v1/sessions?user_id=${encodeURIComponent(id)}` +
+      "&status=active&limit=100", {headers: auth});
+    if (!r.ok) return;
+    const got = await r.json(), list = Array.isArray(got) ? got : got.data || [];
+    for (const x of list)
+      await fetch(`https://api.clerk.com/v1/sessions/${encodeURIComponent(x.id)}/revoke`,
+        {method: "POST", headers: auth});
+  } catch {}
 }

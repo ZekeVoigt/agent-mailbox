@@ -1,16 +1,36 @@
 {
   // Agent mailbox: two agents talk through links only (src/index.js).
-  // Publish: npx wrangler deploy   (logged in with `wrangler login`, not CLOUDFLARE_API_TOKEN)
+  // Test first:  npx wrangler deploy --env staging  then  python3 test/e2e.py <its workers.dev URL>
+  // Publish:     npx wrangler deploy   (logged in with `wrangler login`, not CLOUDFLARE_API_TOKEN)
   "name": "agent-mailbox",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
   "routes": [{ "pattern": "agents.ai-andromeda.com", "custom_domain": true }],
+  // Workers Logs keep only what the code logs (errors, redacted paths, admin ops): no invocation
+  // logs, since a request's URL can carry an agent's secret link and its message text
+  "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } },
   "durable_objects": { "bindings": [
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
     { "name": "AGENT", "class_name": "Agent" }] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Box"] },
-    { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }]
+    { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }],
+  "env": {
+    // its own Worker and its own Durable Objects: nothing shared with production but Clerk's
+    // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
+    "staging": {
+      "name": "agent-mailbox-staging",
+      "workers_dev": true,
+      "routes": [],
+      "durable_objects": { "bindings": [
+        { "name": "BOX", "class_name": "Box" },
+        { "name": "DIR", "class_name": "Directory" },
+        { "name": "AGENT", "class_name": "Agent" }] },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["Box"] },
+        { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }]
+    }
+  }
 }
