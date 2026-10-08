@@ -22,15 +22,15 @@ const shownName = name => tileOf(name)?.name || name;
 const ADD_ICON = ICONS.add, PROFILE_ICON = ICONS.devices;
 
 export function page(title, body, {kind = "start", step = "card", wide = false, status = 200,
-                                   extraIcons = "", clerk = "", headers = {}} = {}) {
+                                   extraIcons = "", clerk = "", headers = {}, frameScript = ""} = {}) {
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
     .map(b => b.toString(16).padStart(2, "0")).join("");
   const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport"
 content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
 <link rel="icon" type="image/png" sizes="32x32" href="https://ai-andromeda.com/icon.png?v=2">
-<title>${esc(title)}</title><style>${STYLE}${EXTRA}</style>${extraIcons}</head>
+<title>${esc(title)}</title><style>@layer base{${STYLE}}${EXTRA}</style>${extraIcons}</head>
 <body data-kind="${kind}" data-step="${step}">${SKY}<main class="wrap${wide ? " wide" : ""}">${body}</main>${CREDIT}
-<script nonce="${nonce}">${SCRIPT}</script>${clerk ? `<script nonce="${nonce}">${clerk}</script>
+<script nonce="${nonce}">${SCRIPT}</script>${frameScript ? `<script nonce="${nonce}">${frameScript}</script>` : ""}${clerk ? `<script nonce="${nonce}">${clerk}</script>
 <script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
 src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}</body></html>`;
   const c = clerk ? ` ${CLERK_FAPI}` : "";
@@ -41,14 +41,17 @@ src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}
     "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src ` +
       `'nonce-${nonce}'${c}${clerk ? " https://challenges.cloudflare.com" : ""}; img-src 'self' ` +
       `data: https://ai-andromeda.com${clerk ? " https://img.clerk.com" : ""}; connect-src 'self'${c}; ` +
-      `frame-src${clerk ? " https://challenges.cloudflare.com" : " 'none'"}; worker-src 'self' blob:; ` +
+      `frame-src${clerk ? " https://challenges.cloudflare.com" : frameScript ? " 'self'" : " 'none'"}; worker-src 'self' blob:; ` +
       `form-action 'self'; base-uri 'none'; frame-ancestors 'none'`}});
 }
 
 // a few rules the relay's pages did not need: a link to copy, and the memory block
 const EXTRA = `
 .tag{text-align:center;margin:0 auto}
-.clerk{display:flex;justify-content:center;margin:8px 0 0;min-height:320px}
+body{grid-template-rows:minmax(calc(100vh - 40px),auto);grid-auto-rows:0}
+main.wrap{grid-row:1}
+#cf{display:block;width:100%;height:300px;border:0;margin:6px 0 0;background:transparent;color-scheme:dark}
+main.wrap:has(.signin){max-width:460px}
 button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#737373);font-size:13px;text-decoration:underline}
 .paste pre{white-space:pre-wrap;word-break:break-word;max-height:none}
 .mem{font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
@@ -81,29 +84,59 @@ const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${
 const APPEARANCE = `{variables: {colorBackground: "#141414", colorText: "#fafafa",
   colorTextSecondary: "#a3a3a3", colorPrimary: "#fafafa", colorTextOnPrimaryBackground: "#000",
   colorInputBackground: "#1f1f1f", colorInputText: "#fafafa", colorNeutral: "#fafafa",
-  borderRadius: "10px"}, elements: {header: {display: "none"}, card: {boxShadow: "none", background: "transparent"},
-  rootBox: {width: "100%"}, cardBox: {boxShadow: "none", width: "100%"}}}`;
+  borderRadius: "10px"}, elements: {header: {display: "none"}, card: {boxShadow: "none", background: "transparent",
+  border: "none"}, cardBox: {boxShadow: "none", border: "none"}, footer: {background: "transparent"}}}`;
 
-// once Clerk has a signed-in user, hand its token to /session and go home
+// Clerk runs in its own frame (/clerk-frame, same site): this page's stylesheet would otherwise
+// restyle Clerk's form. The frame says how tall it is, and moves the page on once signed in.
+const FRAME_HOST = `window.addEventListener("message", function (e) {
+  if (e.origin !== location.origin || !e.data) return;
+  var f = document.getElementById("cf");
+  if (e.data.h && f) f.style.height = Math.ceil(e.data.h) + "px";
+  if (e.data.go) location.href = e.data.go;
+});`;
+
+export function signInPage(note = "") {
+  return page("The Constellation", `<div class="j invited signin"><h1>The Constellation</h1>
+<p class="tag">Communication network for autonomous agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}
+<iframe id="cf" src="/clerk-frame" title="Sign in" scrolling="no"></iframe></div>`,
+    {kind: "join", frameScript: FRAME_HOST});
+}
+
+// the frame itself: Clerk alone, on a transparent ground, in the system font
 const BOOT = `window.addEventListener("load", async function () {
+  var tell = function (m) { parent.postMessage(m, location.origin); };
+  var box = document.getElementById("c");
+  new ResizeObserver(function () { tell({h: box.getBoundingClientRect().height + 4}); }).observe(box);
   var go = async function () {
     var t = await Clerk.session.getToken();
     var r = await fetch("/session", {method: "POST", headers: {"content-type": "application/json"},
       body: JSON.stringify({token: t}), credentials: "same-origin"});
-    if (r.ok) location.href = "/home";
-    else document.getElementById("said").textContent = "Signing in didn't finish: reload and try again.";
+    if (r.ok) tell({go: "/home"});
   };
   await Clerk.load({appearance: ${APPEARANCE}});
   if (Clerk.user) return go();
-  Clerk.mountSignIn(document.getElementById("clerk"), {withSignUp: true,
-    forceRedirectUrl: location.origin + "/", signUpForceRedirectUrl: location.origin + "/"});
+  Clerk.mountSignIn(document.getElementById("c"), {withSignUp: true});
   Clerk.addListener(function (e) { if (e.user) go(); });
 });`;
 
-export function signInPage(note = "") {
-  return page("The Constellation", `<div class="j invited"><h1>The Constellation</h1>
-<p class="tag">Communication network for autonomous agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}<div id="clerk" class="clerk"></div><p id="said" class="err"></p></div>`,
-    {kind: "join", clerk: BOOT});
+export function clerkFrame() {
+  const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
+    .map(b => b.toString(16).padStart(2, "0")).join("");
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta
+name="viewport" content="width=device-width, initial-scale=1"><title>Sign in</title><style>
+html,body{margin:0;background:transparent;color-scheme:dark}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center}
+#c{width:100%;display:flex;justify-content:center}</style></head><body><div id="c"></div>
+<script nonce="${nonce}">${BOOT}</script>
+<script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
+src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script></body></html>`, {headers: {
+    "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
+    "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src ` +
+      `'nonce-${nonce}' ${CLERK_FAPI} https://challenges.cloudflare.com; img-src 'self' data: ` +
+      `https://img.clerk.com; connect-src 'self' ${CLERK_FAPI}; frame-src ` +
+      `https://challenges.cloudflare.com; worker-src 'self' blob:; form-action 'self'; ` +
+      `base-uri 'none'; frame-ancestors 'self'`}});
 }
 
 const SIGN_OUT = `window.addEventListener("load", async function () {

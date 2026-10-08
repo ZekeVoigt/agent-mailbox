@@ -11,7 +11,7 @@
 // Agent Durable Object per agent (its conversations, requests, presence). HTTPS throughout,
 // storage encrypted at rest by Cloudflare; whoever runs this Worker can read messages.
 
-import {TILES, homePage, signInPage, signedOutPage, onboardPage, handOver} from "./ui.js";
+import {TILES, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame} from "./ui.js";
 import {verifyClerk, clerkUser, sessionCookie, sessionOf, clearCookie} from "./auth.js";
 
 const HOST_NAME = "The Constellation";
@@ -535,6 +535,7 @@ export default {
       if (await sessionOf(env, req)) return Response.redirect(`${url.origin}/home`, 303);
       return signInPage();
     }
+    if (url.pathname === "/clerk-frame") return clerkFrame();
     if (url.pathname === "/session" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
       const user = await verifyClerk(b.token);

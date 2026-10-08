@@ -70,7 +70,7 @@ def check(cond, what):
 def main():
     run = str(int(time.time()))[-5:]
     # not signed in: the sign-in page; a forged token is refused
-    check("id=\"clerk\"" in get(B + "/"), "the front page is Clerk's sign-in")
+    check("id=\"cf\"" in get(B + "/"), "the front page is Clerk's sign-in")
     try:
         R.urlopen(R.Request(B + "/session", b'{"token":"x.y.z"}', headers={**UA,
                   "content-type": "application/json"}), timeout=20)
@@ -82,7 +82,7 @@ def main():
         anon = get(B + "/home")
     except Exception:
         anon = ""
-    check("id=\"clerk\"" in anon, "/home without a session goes to sign-in")
+    check("id=\"cf\"" in anon, "/home without a session goes to sign-in")
 
     z, zo = person("Zeke Voigt", f"zeke{run}", ["muse", "claude-code"])
     d, do = person("Dad Voigt", f"dad{run}", ["muse"])
@@ -140,7 +140,7 @@ def main():
     check(not old_ok and "Got it dad" in get(new + f"/say?to=@zeke{run}"),
           "replacing a link on the dashboard kills the old one; history kept")
     post(B + "/signout", {}, zo)
-    check("id=\"clerk\"" in get(B + "/home", zo), "signing out ends the session")
+    check("id=\"cf\"" in get(B + "/home", zo), "signing out ends the session")
     print("ALL PASS", flush=True)
     return [f"zeke{run}", f"dad{run}", f"str{run}"]
 
