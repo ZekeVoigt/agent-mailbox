@@ -131,6 +131,42 @@ font-size:13.5px;text-align:left;color:var(--soft);background:none;border:0;bord
 .ncard details.edit{margin:14px 0 0}
 .ncard details.edit summary{cursor:pointer;font-size:12.5px;color:var(--dim)}
 .ncard details.edit[open] summary{margin-bottom:10px}
+.signout-here{margin:10px 0 0}
+
+/* -- phones: the app is the whole screen, tabs at the bottom, panels full screen ------------- */
+@media (max-width:760px){
+body[data-step=done]{display:block;min-height:100dvh;padding:0}
+body[data-step=done] main.wrap.wide{width:100%;max-width:none;height:100dvh;min-height:0;margin:0;padding:0;
+border-radius:0;box-shadow:none;animation:none}
+body[data-step=done] .credit{display:none}
+.shell{flex-direction:column-reverse;height:100%}
+.nav,.nav:hover,.nav:focus-within{flex:none;flex-direction:row;width:100%;
+padding:4px 6px calc(4px + env(safe-area-inset-bottom));overflow:visible;background:#0b0b0b;border-top:1px solid #1d1d1d}
+.nav>div:first-child{display:flex;justify-content:space-around;width:100%;gap:0}
+.nav>div:last-child{display:none}
+.nav a{flex:1;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;
+padding:7px 2px 5px;font-size:10.5px;line-height:1.1;border-radius:10px}
+.nav a span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;opacity:1}
+.nav svg{width:22px;height:22px}
+.nav .pip:after{left:calc(50% + 7px);top:5px}
+.main{flex:1;min-height:0;margin:0;padding:22px 16px 28px;border-radius:0;overflow-y:auto;
+-webkit-overflow-scrolling:touch}
+.main:has(>#connections:not([hidden])){padding:0}
+section#connections:not([hidden]){height:100%}
+#connections .graph{height:100%;min-height:0}
+.ncard{inset:0;width:auto;max-width:none;padding:18px 16px calc(24px + env(safe-area-inset-bottom));border-radius:0}
+.ncard .x{right:8px;top:8px;width:40px;height:40px;font-size:24px}
+.find{left:12px;right:12px;bottom:12px;width:auto}
+.sugg{max-height:50vh}
+.sugg .opt{padding:10px}
+.row{flex-wrap:wrap;gap:10px 12px}
+.row .why{flex:1 1 calc(100% - 40px);white-space:normal}
+.row .acts,.row .st{margin-left:34px}
+.row .acts form button{padding:9px 18px}
+.view h1{font-size:24px}
+input,textarea,select,.graph .find input,.ncard input,.ncard textarea,.ncard select{font-size:16px}
+.bacts button,.ncard form.ask button,.ncard .compose button,.ncard .setstatus button{padding:10px 18px}
+}
 h2 .mk{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
 h2{display:flex;align-items:center;gap:6px}
 @media (max-width:760px){.wrap.wide,.shell,.nav{min-width:0;max-width:100%}
@@ -430,6 +466,7 @@ Let people find me by name (your exact @handle always works)</label>
 class="why">${esc(device(x.ua))}${x.sid === current ? " <small>· this browser</small>" : ""}<br><small>${
     esc(x.ip || "")} · since ${when(x.at)} · active ${ago(now - x.seen)}</small></span>${
     x.sid === current ? "" : act({do: "end-session", sid: x.sid}, "Sign out", true)}</div>`).join("")}</div>
+<div class="signout-here"><form method="post" action="/signout"><button class="ghost">Sign out</button></form></div>
 ${act({do: "end-all"}, "Sign out everywhere", true)}`;
   const activity = `<h2>Security activity</h2><div class="rows">${log.length ? log.map(x =>
     `<div class="row"><span class="why">${esc(x.what)}<br><small>${when(x.at)} · ${esc(x.ip || "")} · ${
@@ -462,8 +499,9 @@ ${v === "connections" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? 
   const bottom = `<form method="post" action="/signout"><button>${ICONS.signout}<span>Sign out</span>` +
     `</button></form><a class="me" href="#profile" title="@${esc(person.handle)}"><i>${
     esc((person.name || person.handle)[0].toUpperCase())}</i><span>@${esc(person.handle)}</span></a>`;
-  const force = start ? `(function(){ var a = document.querySelector('.nav a[href="#${start}"]');
-  if (a) a.click(); })();` : "";
+  const force = (start ? `(function(){ var a = document.querySelector('.nav a[href="#${start}"]');
+  if (a) a.click(); })();` : "") + `window.addEventListener("hashchange", function(){
+  var a = document.querySelector('.nav a[href="' + location.hash + '"]'); if (a) a.click(); });`;
   return page(`@${person.handle}`, `<div class="shell" data-start="${first}"><nav class="nav"
 aria-label="Dashboard"><div>${top}</div><div>${bottom}</div></nav><div class="main">${main}</div></div>`,
     {kind: "start", step: "done", wide: true, frameScript: force + BOARD});
