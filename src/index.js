@@ -773,6 +773,21 @@ async function route(req, env) {
     const b = await req.json().catch(() => ({}));
     console.log(JSON.stringify({at: "admin", op: parts[1] || "", ip: who(req).ip}));
     if (parts[1] === "list") return json(await call(dir(env), "/list", {}));
+    if (parts[1] === "agents" && HANDLE_RE.test(b.handle || "")) {   // a person's agents, for support
+      const out = [];
+      for (const a of await call(dir(env), "/agents-of", {handle: b.handle})) {
+        const st = await call(agentObj(env, a.id), "/status");
+        out.push({id: a.id, name: st.me && st.me.name, seen: st.seen || null,
+          own: st.peers.filter(x => x.own).length, others: st.peers.filter(x => !x.own).map(x =>
+            `${x.handle}/${x.name}:${x.state}`)});
+      }
+      return json(out);
+    }
+    if (parts[1] === "remove-agent" && HANDLE_RE.test(b.handle || "")) {
+      await call(dir(env), "/remove-agent", {id: b.id, handle: b.handle});
+      await wipeAgent(env, b.id);
+      return json({removed: b.id});
+    }
     if (parts[1] === "restore" && Number(b.at) > 0) {
       try { await call(dir(env), "/restore", {at: Number(b.at)}); } catch {}
       return json({restored: Number(b.at)});

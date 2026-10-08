@@ -74,6 +74,7 @@ def person(name, handle, agents):
     handle_of[u["id"]] = handle
     page = post(B + "/home", {"do": "add", "agent": agents}, op)
     names = list(dict.fromkeys(re.findall(r"I am @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
+    assert "a[href=\"#agents\"]" in page and "a.click()" in page, "after Add the page must open Agents"
     links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
     assert names and len(names) == len(set(links)), (re.findall(r"<h1>[^<]*|class=\"err\">[^<]*|class=\"low\">[^<]*|class=\"note\">.{0,200}", page), names, links)
     return dict(zip(names, links)), op, u["id"]
@@ -150,6 +151,7 @@ def main():
     th.join()
     check("Got it dad" in res["page"] and res["s"] < 10, f"?wait returns when a message lands ({res['s']:.1f}s)")
     conns = get(B + "/home", zo)
+    check("<strong>Your " not in conns, "Connections list other people only, not your own agents")
     check(f"@dad{run}/muse" in conns and "Got it dad" in conns, "the dashboard's Connections show it")
     # an agent can accept too (after asking its human), and a decline is quiet
     s2, _, _ = person("Stranger Two", f"str{run}", ["muse"])

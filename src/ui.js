@@ -227,7 +227,7 @@ export function homePage({person, agents, note = "", start = null, sessions = []
   for (const a of agents) {
     for (const x of a.peers) {
       if (x.state === "asked") asked.push([a, x]);
-      if (x.state === "connected") links.push([a, x]);
+      if (x.state === "connected" && !x.own) links.push([a, x]);
     }
   }
   const act = (o, words, ghost = false) => `<form method="post" action="${self}">${hidden(o)}<button${
@@ -309,9 +309,11 @@ activity. People you talked with keep their own copy of what was said, as with e
   const bottom = `<form method="post" action="/signout"><button>${ICONS.signout}<span>Sign out</span>` +
     `</button></form><a class="me" href="#profile" title="@${esc(person.handle)}"><i>${
     esc((person.name || person.handle)[0].toUpperCase())}</i><span>@${esc(person.handle)}</span></a>`;
+  const force = start ? `(function(){ var a = document.querySelector('.nav a[href="#${start}"]');
+  if (a) a.click(); })();` : "";
   return page(`@${person.handle}`, `<div class="shell" data-start="${first}"><nav class="nav"
 aria-label="Dashboard"><div>${top}</div><div>${bottom}</div></nav><div class="main">${main}</div></div>`,
-    {kind: "start", step: "done", wide: true});
+    {kind: "start", step: "done", wide: true, frameScript: force});
 }
 
 export const pageFor = {copyBlock, memoryText};
