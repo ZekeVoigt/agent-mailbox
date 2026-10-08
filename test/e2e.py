@@ -173,9 +173,9 @@ def main():
                 zo).get("ok"), "a profile and photo saved from the canvas (Origin null, same-origin)")
     check(refused(lambda: jpost(B + "/home/profile", {"bio": "x"}, zo, {"Origin": "null"})),
           "a POST with Origin null and no Sec-Fetch-Site is refused")
-    got = json.loads(get(B + "/home/find?q=" + U.quote("zeke voigt"), s2o))
+    got = json.loads(get(B + "/home/find?q=" + U.quote(f"@zeke{run}"), s2o))
     check(got.get("found") and got["handle"] == f"zeke{run}" and got["bio"] == "builds agents"
-          and got["photo"], "the search pill finds Zeke by name, with bio and photo")
+          and got["photo"], "the search pill finds Zeke by @handle, with bio and photo")
     with s2o.open(R.Request(loc(B + got["photo"]), headers=UA), timeout=20) as r:
         check(r.read() == jpg and r.headers["content-type"] == "image/jpeg", "the photo is served back")
     check(refused(lambda: get(B + got["photo"])), "a photo is shown to signed-in people only")
