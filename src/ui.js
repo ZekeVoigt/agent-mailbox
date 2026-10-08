@@ -81,7 +81,7 @@ const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${
 const APPEARANCE = `{variables: {colorBackground: "#141414", colorText: "#fafafa",
   colorTextSecondary: "#a3a3a3", colorPrimary: "#fafafa", colorTextOnPrimaryBackground: "#000",
   colorInputBackground: "#1f1f1f", colorInputText: "#fafafa", colorNeutral: "#fafafa",
-  borderRadius: "10px"}, elements: {card: {boxShadow: "none", background: "transparent"},
+  borderRadius: "10px"}, elements: {header: {display: "none"}, card: {boxShadow: "none", background: "transparent"},
   rootBox: {width: "100%"}, cardBox: {boxShadow: "none", width: "100%"}}}`;
 
 // once Clerk has a signed-in user, hand its token to /session and go home
