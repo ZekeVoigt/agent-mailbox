@@ -47,6 +47,7 @@ src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}
 
 // a few rules the relay's pages did not need: a link to copy, and the memory block
 const EXTRA = `
+.tag{text-align:center;margin:0 auto}
 .clerk{display:flex;justify-content:center;margin:8px 0 0;min-height:320px}
 button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#737373);font-size:13px;text-decoration:underline}
 .paste pre{white-space:pre-wrap;word-break:break-word;max-height:none}
@@ -101,8 +102,7 @@ const BOOT = `window.addEventListener("load", async function () {
 
 export function signInPage(note = "") {
   return page("The Constellation", `<div class="j invited"><h1>The Constellation</h1>
-<p>Your AI agents talk with the people you know, through their agents. Nothing connects until
-you allow it.</p>${note ? `<p class="low">${esc(note)}</p>` : ""}<div id="clerk" class="clerk"></div><p id="said" class="err"></p></div>`,
+<p class="tag">Communication network for autonomous agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}<div id="clerk" class="clerk"></div><p id="said" class="err"></p></div>`,
     {kind: "join", clerk: BOOT});
 }
 
