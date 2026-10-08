@@ -42,12 +42,21 @@ def post(url, data, op=None, origin=True):
         return r.read().decode()
 
 
+def jpost(url, obj, op, head=None):
+    """A JSON POST as the canvas's script sends it from a real page: Origin "null" (the page sends
+    no referrer) and Sec-Fetch-Site same-origin, unless `head` says otherwise."""
+    h = {**UA, "content-type": "application/json", **(head if head is not None else
+         {"Origin": "null", "Sec-Fetch-Site": "same-origin"})}
+    with op.open(R.Request(loc(url), json.dumps(obj).encode(), headers=h), timeout=40) as r:
+        return json.loads(r.read() or b"{}")
+
+
 def refused(fn):
     try:
         fn()
         return False
     except R.HTTPError as e:
-        return e.code in (403, 404, 410)
+        return e.code in (401, 403, 404, 410)
 
 
 def session(uid):
@@ -151,10 +160,30 @@ def main():
     th.join()
     check("Got it dad" in res["page"] and res["s"] < 10, f"?wait returns when a message lands ({res['s']:.1f}s)")
     conns = get(B + "/home", zo)
-    check("<strong>Your " not in conns, "Connections list other people only, not your own agents")
-    check(f"@dad{run}/muse" in conns and "Got it dad" in conns, "the dashboard's Connections show it")
+    check(f'data-addr="dad{run}"' in conns and f'data-addr="zeke{run}"' not in conns,
+          "the Connections canvas shows Dad, and never your own agents as people")
     # an agent can accept too (after asking its human), and a decline is quiet
-    s2, _, _ = person("Stranger Two", f"str{run}", ["muse"])
+    s2, s2o, _ = person("Stranger Two", f"str{run}", ["muse"])
+    # the canvas: a profile with a photo, found by name, and asked to connect from the page
+    import base64
+    jpg = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 4
+    check(jpost(B + "/home/profile", {"name": "Zeke Voigt", "bio": "builds agents",
+                                      "findable_by_name": True,
+                                      "photo": "data:image/jpeg;base64," + base64.b64encode(jpg).decode()},
+                zo).get("ok"), "a profile and photo saved from the canvas (Origin null, same-origin)")
+    check(refused(lambda: jpost(B + "/home/profile", {"bio": "x"}, zo, {"Origin": "null"})),
+          "a POST with Origin null and no Sec-Fetch-Site is refused")
+    got = json.loads(get(B + "/home/find?q=" + U.quote("zeke voigt"), s2o))
+    check(got.get("found") and got["handle"] == f"zeke{run}" and got["bio"] == "builds agents"
+          and got["photo"], "the search pill finds Zeke by name, with bio and photo")
+    with s2o.open(R.Request(loc(B + got["photo"]), headers=UA), timeout=20) as r:
+        check(r.read() == jpg and r.headers["content-type"] == "image/jpeg", "the photo is served back")
+    check(refused(lambda: get(B + got["photo"])), "a photo is shown to signed-in people only")
+    s2home = get(B + "/home", s2o)
+    s2agent = re.search(r'<option value="([^"]+)">', s2home).group(1)
+    check(jpost(B + "/home/invite", {"agent": s2agent, "person": f"zeke{run}", "why": "canvas hello"},
+                s2o).get("state") == "asked", "Ask to connect from the canvas sends a request")
+    check("canvas hello" in get(B + "/home", zo), "it waits on Zeke's dashboard")
     get(s2["muse"] + "/reach?" + U.urlencode({"to": f"@zeke{run}", "why": "buy my stuff"}))
     acc = re.search(r"decline:\s+(https?://\S+)", get(zm)).group(1)
     check("Declined" in get(acc), "Zeke's Muse may decline")

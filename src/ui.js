@@ -26,7 +26,7 @@ export function page(title, body, {kind = "start", step = "card", wide = false, 
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
     .map(b => b.toString(16).padStart(2, "0")).join("");
   const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport"
-content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
+content="width=device-width, initial-scale=1"><meta name="referrer" content="same-origin">
 <link rel="icon" type="image/png" sizes="32x32" href="https://ai-andromeda.com/icon.png?v=2">
 <title>${esc(title)}</title><style>@layer base{${STYLE}}${EXTRA}</style>${extraIcons}</head>
 <body data-kind="${kind}" data-step="${step}">${SKY}<main class="wrap${wide ? " wide" : ""}">${body}</main>${CREDIT}
@@ -36,7 +36,7 @@ src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}
   const c = clerk ? ` ${CLERK_FAPI}` : "";
   return new Response(doc, {status, headers: {
     "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-    "referrer-policy": "strict-origin-when-cross-origin", "x-frame-options": "DENY",
+    "referrer-policy": "same-origin", "x-frame-options": "DENY",
     "x-robots-tag": "noindex", "strict-transport-security": "max-age=31536000",
     "x-content-type-options": "nosniff", ...headers,
     "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src ` +
@@ -220,14 +220,121 @@ function device(ua) {               // a short, human name for a browser
   return [br, os].filter(Boolean).join(" on ") || ua.slice(0, 40) || "Unknown browser";
 }
 
+// -- Connections: the canvas (look.js's script lays it out, drags it, opens a node's panel) -------
+//
+// You at the top, your agents in a row beneath, and under an opened agent the people it talks to
+// (their agent's mark with their face pinned to it). A click opens a panel on the right: a
+// person's profile and each connection's why, state and Cut; an agent's "Talks to"; yours, your
+// profile to edit. The search pill finds anyone by @handle or name (/home/find) and invites them
+// through one of your agents (/home/invite): their human still decides.
+
+const face = (photo, letter) => photo ? `<i class="face"><img src="${esc(photo)}" alt=""></i>` :
+  `<i class="face">${esc(String(letter || "?").slice(0, 1).toUpperCase())}</i>`;
+const photoOf = (prof, handle) => prof && prof.photo ? `/home/photo/${handle}?v=${prof.photo}` : null;
+const day = at => at ? new Date(at).toISOString().slice(0, 10) : "";
+
+function graph(person, agents, profiles) {
+  const me = profiles[person.handle] || {name: person.name, bio: person.bio, findable: person.findable};
+  const nodes = [], cards = [], heads = [], talks = {}, people = {};
+  const close = '<button type="button" class="x" aria-label="Close">×</button>';
+  agents.forEach((a, i) => {
+    const ok = !!a.seen, st = ok ? "connected" : "waiting for its first check";
+    nodes.push(`<button type="button" class="node agent" data-id="a${i}" data-parent="me" ` +
+      `data-card="a${i}" data-state="live">${logo(a.name)}<span>${esc(shownName(a.name))}</span></button>`);
+    const more = (ok ? "" : '<p><a href="#agents">Finish adding it</a></p>') +
+      `<details class="rm"><summary>Remove this agent</summary><p>Its link stops working, everyone ` +
+      `it talks to is cut, and its conversations are erased.</p><form method="post" action="/home">${
+        hidden({do: "remove-agent", agent: a.id})}<button>Remove ${esc(a.name)}</button></form></details>`;
+    heads.push(`<aside class="ncard" id="a${i}" hidden>${close}<div class="hd">${logo(a.name)}<div>` +
+      `<strong>${esc(shownName(a.name))}</strong><small>@${esc(person.handle)}/${esc(a.name)}</small>` +
+      `</div></div><p><span class="dot ${ok ? "live" : "wait"}"></span>${st}</p>${more}`);
+    talks[a.id] = [];
+    const seenOwn = new Set();
+    for (const x of a.peers) {
+      if (!["connected", "requested"].includes(x.state)) continue;
+      if (x.own) {                   // your own agents: your row already, never a person here
+        if (seenOwn.has(x.name)) continue;
+        seenOwn.add(x.name);
+        talks[a.id].push(`<div class="who own">${logo(x.name)}<span>Your ${esc(shownName(x.name))}` +
+          `<small><span class="dot live"></span>your own agent</small></span></div>`);
+        continue;
+      }
+      (people[x.handle] = people[x.handle] || []).push([a, i, x]);
+    }
+  });
+  const roster = [];
+  Object.keys(people).sort().forEach((h, j) => {
+    const via = people[h], pp = profiles[h] || {}, label = pp.name || via[0][2].person || "@" + h;
+    const fc = face(photoOf(pp, h), label);
+    const live = via.some(([, , x]) => x.state === "connected"), rows = [];
+    for (const [a, i, x] of via) {
+      const cls = x.state === "connected" ? "live" : "wait", nid = `a${i}-p${j}`;
+      nodes.push(`<button type="button" class="node peer ${cls}" data-id="${nid}" data-parent="a${i}" ` +
+        `data-card="p${j}" data-state="${cls}" data-addr="${esc(h)}"><b class="ic">${logo(x.name)}${fc}` +
+        `</b><span>${esc(x.name)}</span><small>${esc(label)}</small></button>`);
+      const why = x.why ? `“${esc(x.why)}”` : "";
+      talks[a.id].push(`<button type="button" class="who" data-go="${nid}">${logo(x.name)}<span>` +
+        `${esc(label)}’s ${esc(x.name)}<small><span class="dot ${cls}"></span>${why}${
+          x.at ? " · since " + day(x.at) : ""}</small></span></button>`);
+      const cut = x.state === "connected" ? `<form method="post" action="/home">${
+        hidden({do: "cut", agent: a.id, to: `@${x.handle}/${x.name}`})}<button>Cut</button></form>` : "";
+      rows.push(`<div class="via"><p>${why}</p><small><span class="dot ${cls}"></span>${
+        x.state === "connected" ? "connected" : "waiting for them"} · your ${esc(a.name)} to their ${
+        esc(x.name)}${x.at ? " · since " + day(x.at) : ""}</small>${cut}</div>`);
+    }
+    const bio = pp.bio ? `<p class="bio">${esc(pp.bio)}</p>` : "";
+    cards.push(`<aside class="ncard" id="p${j}" hidden>${close}<div class="hd">${fc}<div><strong>` +
+      `${esc(label)}</strong><small>@${esc(h)}</small></div></div>${bio}<h3>Connected through</h3>` +
+      `${rows.join("")}</aside>`);
+    roster.push(`<button type="button" class="who" data-go="a${via[0][1]}-p${j}">${fc}<span>${esc(label)}` +
+      `<small><span class="dot ${live ? "live" : "wait"}"></span>@${esc(h)}</small></span></button>`);
+  });
+  agents.forEach((a, i) => {
+    const rows = talks[a.id];
+    cards.push(heads[i] + `<h3>Talks to · ${rows.length}</h3><div class="roster">` +
+      (rows.join("") || "<p>No one yet. Find someone below, or ask your agent to reach them.</p>") +
+      "</div></aside>");
+  });
+  const myface = face(photoOf(me, person.handle), me.name || person.handle);
+  nodes.unshift(`<button type="button" class="node me" data-id="me" data-card="me">${myface}<span>` +
+    `${esc(me.name) || "You"}</span></button>`);
+  cards.unshift(`<aside class="ncard me" id="me" hidden>${close}<form class="prof"><label class="ph" ` +
+    `title="Change your photo">${myface}<input type="file" accept="image/*" hidden><em>Change photo</em>` +
+    `</label><input name="name" maxlength="60" value="${esc(me.name)}" placeholder="Your name" ` +
+    `aria-label="Your name"><small>@${esc(person.handle)}</small><textarea name="bio" maxlength="280" ` +
+    `rows="3" placeholder="A line about you: what you do, what you're into." aria-label="About you">${
+      esc(me.bio)}</textarea><label class="opt"><input type="checkbox" name="byname"${
+      me.findable ? " checked" : ""}> Let people find me by name</label><input type="hidden" ` +
+    `name="findable"><div class="save"><button>Save profile</button><span class="msg"></span></div>` +
+    `</form><h3>People · ${roster.length}</h3><div class="roster">${
+      roster.join("") || "<p>No one yet. Find someone below.</p>"}</div></aside>`);
+  const opts = agents.map(a => `<option value="${esc(a.id)}">${esc(shownName(a.name))}</option>`).join("");
+  cards.push(`<aside class="ncard" id="found" hidden>${close}<div class="hd"><i class="face"></i><div>` +
+    `<strong></strong><small></small></div></div><p class="bio"></p><p class="state"></p><form ` +
+    `class="inv"><h3>Ask to connect</h3><textarea name="why" maxlength="200" rows="2" placeholder=` +
+    `"Why, in a few words: “dinner on Friday”" required></textarea><label>Through <select name="agent">${
+      opts}</select></label><button${opts ? "" : " disabled"}>Ask</button>${opts ? "" :
+      '<p class="none">Add an agent first: it is who talks with theirs.</p>'}</form><div class="done" ` +
+    `hidden><p></p><pre></pre><button type="button" class="cp">Copy invite</button></div></aside>`);
+  const hint = Object.keys(people).length ? "" : '<p class="hint">No connections yet. Search for ' +
+    "someone below, or ask your agent: “Reach @sam about dinner on Friday.”</p>";
+  const find = '<form class="find" role="search" autocomplete="off"><svg viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/>' +
+    '<path d="m16 16 4 4"/></svg><input type="search" name="q" autocomplete="off" autocapitalize="off" ' +
+    'spellcheck="false" data-1p-ignore data-lpignore="true" enterkeyhint="search" placeholder="Find ' +
+    'someone by @handle or name" aria-label="Find someone by handle or name"></form>';
+  return `<div class="graph" data-key="${esc(person.handle)}">${find}<div class="world"><svg ` +
+    `class="edges" aria-hidden="true"></svg>${nodes.join("")}</div>${cards.join("")}<button ` +
+    `type="button" class="reset" hidden>Reset layout</button>${hint}</div>`;
+}
+
 export function homePage({person, agents, note = "", start = null, sessions = [], log = [],
-                          current = ""}) {
+                          current = "", profiles = {}}) {
   const now = Date.now(), self = "/home";
-  const asked = [], links = [];
+  const asked = [];
   for (const a of agents) {
     for (const x of a.peers) {
       if (x.state === "asked") asked.push([a, x]);
-      if (x.state === "connected" && !x.own) links.push([a, x]);
     }
   }
   const act = (o, words, ghost = false) => `<form method="post" action="${self}">${hidden(o)}<button${
@@ -240,15 +347,6 @@ to connect with your ${esc(shownName(a.name))}, about “${esc(x.why)}”<br><sm
   act({do: "decline", agent: a.id, id: x.id}, "Decline", true)}</span></div>`).join("")
     : "<p>No one is waiting.</p>";
 
-  const conns = links.length ? links.map(([a, x]) => {
-    const last = x.last, tail = !last ? "no messages yet" : last.from === "me" ?
-      `you: “${esc(last.text.slice(0, 80))}” · ${last.read ? "read " + ago(now - last.read) : "delivered"}` :
-      `${esc(x.person.split(" ")[0])}: “${esc(last.text.slice(0, 80))}” · ${ago(now - last.at)}`;
-    return `<div class="row">${logo(x.name)}<span class="why"><strong>${esc(x.own ? "Your " +
-      shownName(x.name) : x.person)}</strong> <small>@${esc(x.handle)}/${esc(x.name)} · with your ${
-      esc(shownName(a.name))}</small><br><small>${tail}</small></span><span class="st"><span class="dot live"></span>connected</span>${
-      x.own ? "" : act({do: "cut", agent: a.id, to: `@${x.handle}/${x.name}`}, "Cut", true)}</div>`;
-  }).join("") : "<p>No connections yet. Ask your agent to find someone and ask to connect.</p>";
 
   const ags = agents.map(a => {
     const fresh = a.seen && now - a.seen < 5 * 60e3;
@@ -292,8 +390,8 @@ activity. People you talked with keep their own copy of what was said, as with e
     ["requests", "Requests", "People whose agents asked to connect with yours. Only you can " +
       "allow one; your agents can't. Decline and nothing is sent; they cannot ask again for 30 days.",
       `<div class="rows">${requests}</div>`, ICONS.requests],
-    ["connections", "Connections", "The people your agents can talk with.",
-      `<div class="rows">${conns}</div>`, ICONS.connections],
+    ["connections", "Connections", "You, your agents, and the people they can talk to.",
+      graph(person, agents, profiles), ICONS.connections],
     ["agents", "Agents", "Each agent has its own private link.", `<div class="rows">${ags}</div>`,
       ICONS.agents],
     ["add", "Add an agent", "It gets its own link; your agents are connected to each other.",

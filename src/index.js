@@ -22,6 +22,7 @@ const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
 const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
+const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -91,7 +92,9 @@ export class Directory {
         seen INTEGER, ua TEXT, ip TEXT);
       CREATE INDEX IF NOT EXISTS session_clerk ON session (clerk);
       CREATE TABLE IF NOT EXISTS audit (clerk TEXT, at INTEGER, what TEXT, ip TEXT, ua TEXT);
-      CREATE INDEX IF NOT EXISTS audit_clerk ON audit (clerk, at);`);
+      CREATE INDEX IF NOT EXISTS audit_clerk ON audit (clerk, at);
+      CREATE TABLE IF NOT EXISTS photo (handle TEXT PRIMARY KEY, data TEXT, at INTEGER);
+      CREATE TABLE IF NOT EXISTS finds (clerk TEXT, at INTEGER);`);
     try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
@@ -107,6 +110,7 @@ export class Directory {
     if (!clerk) return;
     this.sql.exec("DELETE FROM session WHERE clerk = ?", clerk);
     this.sql.exec("DELETE FROM audit WHERE clerk = ?", clerk);
+    this.sql.exec("DELETE FROM finds WHERE clerk = ?", clerk);
   }
 
   async fetch(req) {
@@ -173,6 +177,7 @@ export class Directory {
     if (p === "/delete") {            // a person, their agents' links, sessions and security log
       const person = this.one("SELECT clerk FROM person WHERE handle = ?", b.handle);
       if (person) this.forget(person.clerk);
+      this.sql.exec("DELETE FROM photo WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM agent WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM person WHERE handle = ?", b.handle);
       return json({deleted: person ? 1 : 0});
@@ -228,9 +233,32 @@ export class Directory {
     }
     if (p === "/audit") return json(this.all("SELECT at, what, ip, ua FROM audit WHERE clerk = ? " +
       "ORDER BY at DESC LIMIT 30", b.clerk));
+    if (p === "/profiles") {          // handle -> how the page shows them (signed-in people only)
+      const out = {};
+      for (const h of (b.handles || []).slice(0, 500)) {
+        const x = this.one("SELECT p.handle, p.name, p.bio, p.findable, f.at photo FROM person p " +
+          "LEFT JOIN photo f USING (handle) WHERE p.handle = ?", h);
+        if (x) out[h] = x;
+      }
+      return json(out);
+    }
+    if (p === "/photo-set") {
+      if (b.data) this.sql.exec("INSERT OR REPLACE INTO photo VALUES (?, ?, ?)", b.handle, b.data, now);
+      else this.sql.exec("DELETE FROM photo WHERE handle = ?", b.handle);
+      return json({ok: true});
+    }
+    if (p === "/photo-get") return json(this.one("SELECT data FROM photo WHERE handle = ?", b.handle));
+    if (p === "/find-quota") {        // at most FINDS_PER_HOUR searches a person an hour
+      this.sql.exec("DELETE FROM finds WHERE at < ?", now - 3600e3);
+      if (this.one("SELECT count(*) n FROM finds WHERE clerk = ?", b.clerk).n >= FINDS_PER_HOUR)
+        return json({ok: false});
+      this.sql.exec("INSERT INTO finds VALUES (?, ?)", b.clerk, now);
+      return json({ok: true});
+    }
     if (p === "/delete-me") {         // the person's own: everything the directory holds of them
       const person = this.one("SELECT handle FROM person WHERE clerk = ?", b.clerk);
       if (person) {
+        this.sql.exec("DELETE FROM photo WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM agent WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM person WHERE handle = ?", person.handle);
       }
@@ -384,6 +412,15 @@ export class Agent {
     if (p === "/cut") return text(await this.cut(me, b.to));
     if (p === "/owner-answer") return json({text: await this.answer(me, base, b.id, b.yes)});
     if (p === "/owner-cut") return json({text: await this.cut(me, b.to)});
+    if (p === "/owner-reach") {       // the human asks, from the canvas, through this agent
+      const t = parseTo(b.to), them = t && await call(dir(this.env), "/resolve", t);
+      if (!them) return json({error: "No one by that name."});
+      const said = await this.reach(me, "", b.to, b.why);
+      const peer = await this.s.get("peer:" + them.id);
+      if (peer && peer.state === "connected") return json({state: "connected"});
+      if (peer && peer.state === "requested" && peer.at > now - 5e3) return json({state: "asked"});
+      return json({error: said});
+    }
     return text("Unknown address.", 404);
   }
 
@@ -568,7 +605,7 @@ async function newSession(env, req, clerk) {
 // which a sibling *.ai-andromeda.com site would get past)
 function sameOrigin(req, url) {
   const o = req.headers.get("origin");
-  if (o) return o === url.origin;
+  if (o && o !== "null") return o === url.origin;
   return req.headers.get("sec-fetch-site") === "same-origin";
 }
 
@@ -600,9 +637,11 @@ async function home(env, person, ses, note = "", start = null) {
     }
     agents.push({id: a.id, name: a.name, seen: st.seen, peers: st.peers});
   }
-  const [sessions, log] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
-    call(dir(env), "/audit", {clerk: ses.clerk})]);
-  return homePage({person, agents, note, start, sessions, log, current: ses.sid});
+  const handles = new Set([person.handle]);
+  for (const a of agents) for (const x of a.peers) handles.add(x.handle);
+  const [sessions, log, profiles] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
+    call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]})]);
+  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles});
 }
 
 async function getHome(req, env) {
@@ -717,6 +756,66 @@ async function postHome(req, env, url) {
   return back("connections");
 }
 
+// -- the Connections canvas's routes (look.js's script calls them): find, invite, profile, photo
+
+async function canvasRoute(req, env, url) {
+  const ses = await sessionOf(env, req);
+  if (!ses) return json({error: "Sign in again."}, 401);
+  const person = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
+  if (!person) return json({error: "Pick your handle first."}, 403);
+  const p = url.pathname;
+  if (p.startsWith("/home/photo/") && req.method === "GET") {
+    const got = await call(dir(env), "/photo-get", {handle: p.slice(12).toLowerCase()});
+    if (!got) return text("No photo.", 404);
+    const raw = Uint8Array.from(atob(got.data), c => c.charCodeAt(0));
+    return new Response(raw, {headers: {...H, "content-type": "image/jpeg",
+      "cache-control": "private, max-age=86400", "content-security-policy": "default-src 'none'"}});
+  }
+  if (p === "/home/find" && req.method === "GET") {
+    if (!(await call(dir(env), "/find-quota", {clerk: ses.clerk})).ok)
+      return json({error: "Too many searches: try again in an hour."}, 429);
+    const q = clean(url.searchParams.get("q"), 64);
+    const hits = await call(dir(env), "/find", {q});
+    if (!hits.length) return json({found: false});
+    const top = hits[0], prof = (await call(dir(env), "/profiles", {handles: [top.handle]}))[top.handle];
+    return json({found: true, account: top.handle, handle: top.handle, self: top.handle === person.handle,
+      name: top.name || "", bio: top.bio || "",
+      photo: prof && prof.photo ? `/home/photo/${top.handle}?v=${prof.photo}` : null,
+      people: hits.slice(1).map(x => ({handle: "@" + x.handle}))});
+  }
+  if (req.method !== "POST") return text("Unknown address.", 404);
+  if (!sameOrigin(req, url)) return json({error: "That didn't come from this site."}, 403);
+  const raw = await req.text();
+  if (raw.length > PHOTO_MAX * 1.5) return json({error: "That's too big."}, 413);
+  let f;
+  try { f = JSON.parse(raw); } catch { return json({error: "That did not arrive whole."}, 400); }
+  if (p === "/home/profile") {
+    if (f.photo) {
+      const data = String(f.photo).replace(/^data:image\/jpeg;base64,/, "");
+      let bytes;
+      try { bytes = atob(data); } catch { return json({error: "The photo is a JPEG."}, 400); }
+      if (bytes.length > PHOTO_MAX || bytes.charCodeAt(0) !== 0xff || bytes.charCodeAt(1) !== 0xd8)
+        return json({error: "The photo is a JPEG, at most 150 KB."}, 400);
+      await call(dir(env), "/photo-set", {handle: person.handle, data});
+    }
+    await call(dir(env), "/profile", {handle: person.handle, name: clean(f.name, 60) || person.name,
+      bio: clean(f.bio, 280), findable: f.findable_by_name !== false});
+    await audit(env, req, ses.clerk, f.photo ? "Changed the profile and photo" : "Changed the profile");
+    return json({ok: true});
+  }
+  if (p === "/home/invite") {
+    const a = person.agents.find(x => x.id === f.agent), to = parseTo(f.person);
+    const why = clean(f.why, MAX_WHY);
+    if (!a || !to) return json({error: "Pick one of your agents and someone to invite."}, 400);
+    if (!why) return json({error: "Say why, in a few words."}, 400);
+    const got = await call(agentObj(env, a.id), "/owner-reach", {to: "@" + to.handle, why});
+    if (got.error) return json({error: got.error}, 400);
+    await audit(env, req, ses.clerk, `Asked @${to.handle} to connect, through ${a.name}`);
+    return json({state: got.state});
+  }
+  return text("Unknown address.", 404);
+}
+
 async function route(req, env) {
   const url = new URL(req.url), parts = url.pathname.split("/").filter(Boolean);
   const q = Object.fromEntries(url.searchParams.entries());
@@ -748,6 +847,7 @@ async function route(req, env) {
     return r;
   }
   if (url.pathname === "/home") return req.method === "POST" ? postHome(req, env, url) : getHome(req, env);
+  if (url.pathname.startsWith("/home/")) return canvasRoute(req, env, url);
   if (parts[0] === "a" && SECRET_RE.test(parts[1] || "")) {
     const ag = await call(dir(env), "/by-link", {link: await digest(parts[1])});
     if (!ag) return text("That link doesn't work (replaced or mistyped).", 404);
