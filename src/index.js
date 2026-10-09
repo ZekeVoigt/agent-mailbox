@@ -14,7 +14,7 @@
 // requests, presence). HTTPS throughout, storage encrypted at rest by Cloudflare; this is NOT
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
-import {TILES, prefsOf, EVERY, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
+import {TILES, prefsOf, SEND, EVERY, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
   errorPage, invitePage} from "./ui.js";
 import {verifyClerk, clerkUser, revokeClerkSessions} from "./auth.js";
 
@@ -1169,12 +1169,16 @@ async function postHome(req, env, url) {
     return back("settings");
   }
   if (f.do === "add") {
+    // the person's own choices, never a default made for them
+    if (!SEND[f.send] || !EVERY[f.every])
+      return home(env, person, ses, "<p>Choose whether your agent may send without asking, and how " +
+        "often it checks. Nothing was added.</p>", "add");
     const names = new Set(person.agents.map(a => a.name)), made = [];
     for (const t of [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a))) {
       let n = t, k = 2;
       while (names.has(n)) n = `${t}-${k++}`;
       names.add(n);
-      made.push({id: crypto.randomUUID(), name: n, link: secret(), prefs: prefsOf({send: f.send, every: f.every})});
+      made.push({id: crypto.randomUUID(), name: n, link: secret(), prefs: {send: f.send, every: f.every}});
     }
     if (!made.length) return home(env, person, ses, "<p>Pick an agent to add.</p>", "add");
     // set each up before the directory knows it: a link never points at an agent with no self
