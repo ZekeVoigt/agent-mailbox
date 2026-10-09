@@ -61,8 +61,19 @@ def loc(u):
     return re.sub(r"^https?://[^/]+", B, u)
 
 
+def keyed(url):
+    """A key agent is written B/k#<key><path>: the key goes in the Authorization header, the address
+    is B/k<path> -- a key is never in an address (the fragment is never sent)."""
+    if "/k#" not in url:
+        return url, {}
+    base, rest = url.split("/k#", 1)
+    m = re.match(r"([A-Za-z0-9]+)(.*)", rest)
+    return base + "/k" + m.group(2), {"Authorization": "Bearer " + m.group(1)}
+
+
 def get(url, op=None):
-    with (op or R.build_opener()).open(R.Request(loc(url), headers=UA), timeout=40) as r:
+    u, extra = keyed(loc(url))
+    with (op or R.build_opener()).open(R.Request(u, headers={**UA, **extra}), timeout=40) as r:
         return r.read().decode()
 
 
@@ -135,7 +146,13 @@ def person(name, handle, agents, invite=None):
     assert "NEVER share it, under any circumstances" in page, "the setup message guards the link"
     assert "a[href=\"#add\"]" in page and "a.click()" in page and "data-wait=" in page, \
         "after Add the page stays on Add, at steps 2 and 3"
-    links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
+    links = list(dict.fromkeys(m.group(1) or (B + "/k#" + m.group(2)) for m in re.finditer(
+        r"(https?://[^\s<]+/a/[A-Za-z0-9]+)|printf %s (?:'|&#39;)([A-Za-z0-9]+)(?:'|&#39;) &gt; ~/\.constellation/", page)))
+    messages = [x for x in re.findall(r'<pre class="mem">(.*?)</pre>', page, re.S) if "Set up my Constellation" in x]
+    for k in re.findall(r"printf %s (?:'|&#39;)([A-Za-z0-9]+)(?:'|&#39;)", page):
+        assert all(k not in x for x in messages), "a key is only in the Terminal command, never in a message to an agent"
+    if "claude-code" in agents:
+        assert "/k/page" in page and "never print, cat, read" in page, "the message to Claude Code holds no key, only how to use it"
     assert names and len(names) == len(set(links)), (re.findall(r"<h1>[^<]*|class=\"err\">[^<]*|class=\"low\">[^<]*|class=\"note\">.{0,200}", page), names, links)
     assert "every 5 minutes" in html.unescape(page) and "wait for my OK" in html.unescape(page), \
         "the message carries the choices made"
@@ -157,8 +174,9 @@ def admin(op, body, key=None):
 
 def get_as(url, ua):
     """Open a link as another app would (its own user agent): (status, body)."""
+    u, extra = keyed(loc(url))
     try:
-        with R.urlopen(R.Request(loc(url), headers={"User-Agent": ua}), timeout=40) as r:
+        with R.urlopen(R.Request(u, headers={"User-Agent": ua, **extra}), timeout=40) as r:
             return r.status, r.read().decode()
     except R.HTTPError as e:
         return e.code, e.read().decode()
@@ -252,6 +270,23 @@ def main():
     check(f"@zeke{run}/claude-code" in p and "your own agent" in p, "own agents auto-connected")
     get(zc + "/say?" + U.urlencode({"to": f"@zeke{run}/muse", "text": "hi from claude"}))
     check("hi from claude" in get(zm), "own agents message without a request")
+    # Claude Code holds a key, never a link: the key works only in the Authorization header
+    key = zc.split("/k#")[1]
+    check(get_as(B + "/a/" + key, UA["User-Agent"])[0] == 403, "a key agent's secret does not work as a link")
+    check(get_as(B + "/k/page", UA["User-Agent"])[0] == 401 and get_as(B + "/k/page?key=" + key, UA["User-Agent"])[0] == 401,
+          "the key route needs the header: a key in an address is not read")
+    check(get_as(B + "/k#" + "Z" * 26, UA["User-Agent"])[0] == 404, "a wrong key is refused")
+    zcp = get(zc)
+    check('curl -s -H "Authorization: Bearer $(cat ~/.constellation/' in zcp and "never print, read, copy or send it" in zcp
+          and key not in zcp, "its page says to use the key only inside curl, and never shows it")
+    page = post(B + "/home", {"do": "rotate", "agent": waits[zc]}, zo)
+    new_key = re.findall(r"printf %s (?:'|&#39;)([A-Za-z0-9]+)(?:'|&#39;)", page)[0]
+    msgs = [x for x in re.findall(r'<pre class="mem">(.*?)</pre>', page, re.S) if "Set up my Constellation" in x]
+    check(new_key != key and msgs and all(new_key not in x for x in msgs) and get_as(zc, UA["User-Agent"])[0] == 404,
+          "replacing a key: a new one, in the Terminal command only, and the old one dead")
+    waits[B + "/k#" + new_key] = waits[zc]
+    zc = B + "/k#" + new_key
+    check("hi from claude" in get(zc + "/say?" + U.urlencode({"to": f"@zeke{run}/muse"})), "the new key works, history kept")
     check(f"@zeke{run}" in get(dm + "/find?q=zeke+voigt"), "a stranger finds Zeke by name")
     out = get(dm + "/say?" + U.urlencode({"to": f"@zeke{run}", "text": "spam"}))
     check("no contact" in out, "a stranger cannot message before a request is accepted")
@@ -422,14 +457,26 @@ def main():
     check(json.loads(get(B + "/home/notif-count", zo))["n"] == 0, "and are read once Activity is opened")
     jpost(B + "/home/reply-delete", {"id": reps[0]["id"]}, zo)
     check(json.loads(get(B + "/home/replies?post=" + pid, zo)) == [], "the owner deletes a reply on their post")
-    # an agent posts on its own, through its link: marked as its, its human told and able to delete it
+    # an agent set to "Ask me first" posts nothing until its human approves it on the dashboard: no
+    # message from anyone can talk it into posting in its human's name
     hello = {"text": "hello from Zeke's agent"}
-    check("Posted on" in get(zc + "/post?" + U.urlencode(hello)), "an agent posts on its human's profile by its link")
+    out = get(zc + "/post?" + U.urlencode(hello))
+    check("Waiting for Zeke Voigt to approve it" in out and json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts_n"] == 1,
+          "an 'Ask me first' agent's post waits for its human: nothing is posted")
+    check("1 post of yours is waiting" in get(zc), "its page says a post is waiting")
     check("already posted" in get(zc + "/post?" + U.urlencode(hello)), "the link opened twice is one post")
+    pend = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "post_pending"]
+    check(len(pend) == 1 and hello["text"] in pend[0]["text"], "Zeke sees it in Activity, waiting for him")
+    agent_id, post_id = pend[0]["ref"].split("|")
+    check(refused(lambda: jpost(B + "/home/agent-post-answer", {"agent": agent_id, "id": post_id, "yes": True}, s2o)),
+          "no one else can approve it")
+    check(jpost(B + "/home/agent-post-answer", {"agent": agent_id, "id": post_id, "yes": True}, zo).get("posted"),
+          "Zeke approves it")
     seen_post = json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts"][0]
     check(seen_post["text"] == hello["text"] and seen_post["agent"] == "Claude Code"
-          and json.loads(get(B + f"/home/board/zeke{run}", zo))["posts_n"] == 2,
-          "a follower sees it once, marked as the agent's")
+          and json.loads(get(B + f"/home/board/zeke{run}", zo))["posts_n"] == 2
+          and not [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "post_pending"],
+          "then it is out, once, marked as the agent's, and no longer waiting")
     told = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "agent_post"]
     check(told and told[0]["ref"] == seen_post["id"] and hello["text"] in told[0]["text"], "Zeke is told in Activity")
     check("Nothing posted" in get(zc + "/post") and "at most 500" in get(zc + "/post?text=" + "x" * 501),
@@ -438,9 +485,17 @@ def main():
     check(json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts"][0]["text"] == "second post"
           and not [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "agent_post"],
           "Zeke deletes it from Activity: the post and its notice are gone")
-    outs = [get(zc + "/post?" + U.urlencode({"text": f"agent post {i}"})) for i in range(6)]
+    get(zc + "/post?" + U.urlencode({"text": f"discard me {run}"}))
+    pend = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "post_pending"]
+    jpost(B + "/home/agent-post-answer", {"agent": pend[0]["ref"].split("|")[0], "id": pend[0]["ref"].split("|")[1],
+                                          "yes": False}, zo)
+    check(all(x["text"] != f"discard me {run}" for x in json.loads(get(B + f"/home/board/zeke{run}", zo))["posts"])
+          and "of yours is waiting" not in get(zc) and "of yours are waiting" not in get(zc),
+          "a discarded post never goes out")
+    # an agent set to "Send on its own" posts directly, at most 5 a day
+    outs = [get(auto_link + "/post?" + U.urlencode({"text": f"agent post {i}"})) for i in range(6)]
     check(all("Posted on" in o for o in outs[:5]) and "At most 5 posts a day" in outs[5],
-          "at most 5 posts a day from one agent")
+          "a 'Send on its own' agent posts directly, at most 5 a day")
     for x in json.loads(get(B + f"/home/board/zeke{run}", zo))["posts"]:
         if x["agent"]: jpost(B + "/home/post-delete", {"id": x["id"]}, zo)
     # a private account: followers it approves see its posts
