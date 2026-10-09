@@ -18,7 +18,7 @@
 
 import {TILES, prefsOf, SEND, EVERY, OFFER, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
   errorPage, invitePage} from "./ui.js";
-import {verifyClerk, clerkUser, revokeClerkSessions} from "./auth.js";
+import {verifyClerk, clerkUser, revokeClerkSessions, configureClerk} from "./auth.js";
 
 const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
@@ -1541,7 +1541,7 @@ async function route(req, env) {
   if (url.pathname === "/session" && req.method === "POST") {
     if (!sameOrigin(req, url)) return json({error: "wrong origin"}, 403);
     const b = await req.json().catch(() => ({}));
-    const user = await verifyClerk(b.token);
+    const user = await verifyClerk(b.token, url.origin);
     if (!user) return json({error: "not signed in"}, 401);
     const cookie = await newSession(env, req, user);
     await audit(env, req, user, "Signed in");
@@ -1634,6 +1634,7 @@ async function route(req, env) {
 export default {
   async fetch(req, env) {
     try {
+      configureClerk(env);
       return await route(req, env);
     } catch (e) {
       const path = new URL(req.url).pathname;

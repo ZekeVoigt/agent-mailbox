@@ -74,6 +74,19 @@ def session(uid):
     return op
 
 
+def browser_token(username, origin):
+    """A session token as a browser on `origin` gets it from Clerk's Frontend API (a fresh dev
+    browser, signed in with the password): Clerk names that origin in the token's `azp`."""
+    fapi = "https://included-rattler-20.clerk.accounts.dev"
+    db = json.loads(R.urlopen(R.Request(fapi + "/v1/dev_browser", b"", headers=UA), timeout=30).read())["token"]
+    def fa(path, form):
+        req = R.Request(f"{fapi}{path}?__clerk_db_jwt={db}", U.urlencode(form).encode(),
+                        headers={**UA, "Origin": origin, "content-type": "application/x-www-form-urlencoded"})
+        return json.loads(R.urlopen(req, timeout=30).read())
+    si = fa("/v1/client/sign_ins", {"identifier": username, "strategy": "password", "password": "Cx-e2e-pass-7731!"})
+    return fa(f"/v1/client/sessions/{si['response']['created_session_id']}/tokens", {})["jwt"]
+
+
 def person(name, handle, agents, invite=None):
     """A signed-in person (their browser, an opener with cookies) and their agents' links; with
     `invite`, they open that invite link first, signed in but with no handle yet."""
@@ -155,6 +168,27 @@ def main():
     except R.HTTPError as e:
         forged = e.code != 401
     check(not forged, "a forged token is refused")
+    # a real Clerk token, minted for another site that shares the Clerk instance, is refused; the
+    # same user's token minted on this site works
+    uname = f"azp{run}x{random.randint(10, 99)}"
+    phone = random.choice([n for n in range(100, 200) if n not in phones]); phones.add(phone)
+    au = clerk("POST", "/users", {"phone_number": [f"+1201555{phone:04d}"], "username": uname,
+                                  "password": "Cx-e2e-pass-7731!", "skip_password_checks": True,
+                                  "public_metadata": {"test": True}})
+    made_users.append(au["id"])
+    def exchange(tok):
+        op = R.build_opener(R.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        try:
+            op.open(R.Request(B + "/session", json.dumps({"token": tok}).encode(),
+                              headers={**UA, "content-type": "application/json", "Origin": B}), timeout=30).read()
+            return op
+        except R.HTTPError as e:
+            return e.code
+    check(exchange(browser_token(uname, "https://other-app.example")) == 401,
+          "a real Clerk token minted for another site (azp) is refused")
+    ok = exchange(browser_token(uname, B))
+    check(not isinstance(ok, int) and "Welcome" in get(B + "/home", ok),
+          "the same person's token minted on this site signs in")
     try:
         anon = get(B + "/home")
     except Exception:
