@@ -19,7 +19,8 @@
     { "name": "DIR", "class_name": "Directory" },
     { "name": "AGENT", "class_name": "Agent" },
     { "name": "LEDGER", "class_name": "Ledger" },
-    { "name": "LINK", "class_name": "LinkRef" }] },
+    { "name": "LINK", "class_name": "LinkRef" },
+    { "name": "LIMIT", "class_name": "Limiter" }] },
   // posts' photos and videos, private: served only through /home/media to whoever may see the post
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "constellation-media" }],
   // hourly: uploads no post carries are erased a day after they were made (sweepMedia)
@@ -28,10 +29,10 @@
     { "tag": "v1", "new_sqlite_classes": ["Box"] },
     { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
     { "tag": "v3", "new_sqlite_classes": ["Ledger"] },
-    { "tag": "v4", "new_sqlite_classes": ["LinkRef"] }],
-  // per IP at the edge: every request, and wrong secrets (links, invites, cookies, admin keys)
-  "ratelimits": [{ "name": "RL_IP", "namespace_id": "1001", "simple": { "limit": 600, "period": 60 } },
-    { "name": "RL_MISS", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }],
+    { "tag": "v4", "new_sqlite_classes": ["LinkRef"] },
+    { "tag": "v5", "new_sqlite_classes": ["Limiter"] }],
+  // per IP: Cloudflare's coarse limiter, a flood shield at twice the exact limit (Limiter, index.js)
+  "ratelimits": [{ "name": "RL_IP", "namespace_id": "1001", "simple": { "limit": 1200, "period": 60 } }],
   "env": {
     // its own Worker and its own Durable Objects: nothing shared with production but Clerk's
     // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
@@ -45,17 +46,18 @@
         { "name": "DIR", "class_name": "Directory" },
         { "name": "AGENT", "class_name": "Agent" },
         { "name": "LEDGER", "class_name": "Ledger" },
-        { "name": "LINK", "class_name": "LinkRef" }] },
+        { "name": "LINK", "class_name": "LinkRef" },
+        { "name": "LIMIT", "class_name": "Limiter" }] },
       "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "constellation-media-staging" }],
       "triggers": { "crons": ["17 * * * *"] },
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Box"] },
         { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
         { "tag": "v3", "new_sqlite_classes": ["Ledger"] },
-        { "tag": "v4", "new_sqlite_classes": ["LinkRef"] }],
-      // per IP at the edge: every request, and wrong secrets (links, invites, cookies, admin keys)
-      "ratelimits": [{ "name": "RL_IP", "namespace_id": "2001", "simple": { "limit": 600, "period": 60 } },
-        { "name": "RL_MISS", "namespace_id": "2002", "simple": { "limit": 30, "period": 60 } }]
+        { "tag": "v4", "new_sqlite_classes": ["LinkRef"] },
+        { "tag": "v5", "new_sqlite_classes": ["Limiter"] }],
+      // per IP: Cloudflare's coarse limiter, a flood shield at twice the exact limit (Limiter, index.js)
+      "ratelimits": [{ "name": "RL_IP", "namespace_id": "2001", "simple": { "limit": 1200, "period": 60 } }]
     }
   }
 }

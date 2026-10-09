@@ -2033,29 +2033,53 @@ async function adminRoute(req, env, op) {
   return text("Unknown.", 404);
 }
 
-// -- rate limits at the edge (Cloudflare's rate-limit bindings), per IP: every request (RL_IP), and
-// misses -- a link, invite, cookie or admin key that is wrong -- (RL_MISS). An IP over the miss limit
-// is refused before any lookup until the minute is out. Without the bindings, nothing is limited here.
+// -- rate limits, per IP. Exact: each IP has its own Limiter (one Durable Object, single-threaded, so
+// every count is exact and global, not per Cloudflare location): at most IP_PER_MIN requests and
+// MISSES_PER_MIN misses -- a link, invite, cookie or admin key that is wrong -- in any 60 seconds; past
+// the miss limit the IP is refused everything, before any lookup, for a minute. Cloudflare's own
+// rate-limit binding (RL_IP, coarse: it lets about twice through in a burst) stands in front, at
+// twice the exact limit, so a flood never reaches the Limiters.
 
-const blocked = new Map();            // ip -> until (this isolate's memory)
+const IP_PER_MIN = 600, MISSES_PER_MIN = 30;
+export class Limiter {
+  constructor(state) { this.s = state.storage; this.hits = []; this.misses = []; }
+  async fetch(req) {
+    const p = new URL(req.url).pathname, b = await req.json().catch(() => ({}));
+    const now = Date.now(), until = (await this.s.get("until")) || 0;
+    if (until > now) return json({ok: false});
+    const keep = xs => { while (xs.length && xs[0] <= now - 60e3) xs.shift(); };
+    if (p === "/hit") {
+      keep(this.hits);
+      if (this.hits.length >= b.most) return json({ok: false});
+      this.hits.push(now);
+      return json({ok: true});
+    }
+    if (p === "/miss") {
+      keep(this.misses);
+      this.misses.push(now);
+      if (this.misses.length <= b.most) return json({ok: true});
+      await this.s.put("until", now + 60e3);           // kept, so a restarted Limiter still refuses
+      return json({ok: false});
+    }
+    return json({error: "unknown"}, 404);
+  }
+}
+const limiter = (env, ip) => env.LIMIT.get(env.LIMIT.idFromName("ip:" + ip));
 const LIMITED = () => new Response("Too many requests: try again in a minute.", {status: 429,
   headers: {...H, "content-type": "text/plain; charset=utf-8", "retry-after": "60"}});
 async function missed(env, req) {     // a wrong secret: null, or the 429 once over the limit
   const ip = who(req).ip;
-  if (!env.RL_MISS || !ip) return null;
-  if ((await env.RL_MISS.limit({key: ip})).success) return null;
-  blocked.set(ip, Date.now() + 60e3);
-  return LIMITED();
+  if (!env.LIMIT || !ip) return null;
+  const got = await call(limiter(env, ip), "/miss", {most: Number(env.MISSES_PER_MIN) || MISSES_PER_MIN});
+  return got.ok ? null : LIMITED();
 }
 async function limited(env, req) {
   const ip = who(req).ip;
   if (!ip) return null;
-  const until = blocked.get(ip);
-  if (until && until > Date.now()) return LIMITED();
-  if (until) blocked.delete(ip);
-  if (blocked.size > 10000) blocked.clear();
   if (env.RL_IP && !(await env.RL_IP.limit({key: ip})).success) return LIMITED();
-  return null;
+  if (!env.LIMIT) return null;
+  const got = await call(limiter(env, ip), "/hit", {most: Number(env.IP_PER_MIN) || IP_PER_MIN});
+  return got.ok ? null : LIMITED();
 }
 
 async function route(req, env) {

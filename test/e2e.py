@@ -654,23 +654,22 @@ def main():
         check(not {f"gonea{run}", f"goneb{run}", real} & set(handles)
               and refused(lambda: get(g1["muse"])) and refused(lambda: get(g2["muse"])),
               "and never an account deleted since, or in the seconds before it: not listed, links dead")
-    # per IP at the edge: wrong secrets, then everything (a minute's wait after each, for the clean-up)
+    # per IP, exactly: 30 wrong secrets a minute, then everything refused for a minute (whichever
+    # Worker serves it); 600 requests in any 60 seconds (a minute's wait first, and after, for the clean-up)
     if TEST_SITE:
-        # Cloudflare's counters are eventually consistent: the limit engages within a burst, not at
-        # an exact count
-        bad = []
-        for i in range(150):
-            bad.append(get_as(B + "/a/" + "Z" * 20 + f"{i:06d}", UA["User-Agent"])[0])
-            if bad[-1] == 429 and len(bad) > 30: break
-        check(bad[0] == 404 and set(bad) <= {404, 429} and 429 in bad,
-              f"wrong links: 404, then 429 once past the limit (after {bad.index(429) if 429 in bad else '-'})")
+        time.sleep(65)
+        bad = [get_as(B + "/a/" + "Z" * 20 + f"{i:06d}", UA["User-Agent"])[0] for i in range(31)]
+        check(bad[:30] == [404] * 30 and bad[30] == 429, f"exactly 30 wrong links a minute, the 31st refused ({bad.count(404)})")
+        check(all(get_as(zm, UA["User-Agent"])[0] == 429 for _ in range(5)),
+              "past the miss limit even the right link is refused, by every Worker")
         time.sleep(65)
         check(get_as(zm, UA["User-Agent"])[0] == 200, "a minute on, the right link works again")
+        time.sleep(65)
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(32) as pool:
-            codes = list(pool.map(lambda i: get_as(B + "/.well-known/security.txt", UA["User-Agent"])[0], range(1500)))
-        check(codes.count(200) >= 500 and set(codes) <= {200, 429} and 429 in codes,
-              f"every request: 429 past 600 a minute ({codes.count(200)} served, {codes.count(429)} refused of 1500)")
+            codes = list(pool.map(lambda i: get_as(B + "/.well-known/security.txt", UA["User-Agent"])[0], range(650)))
+        check(codes.count(200) == 600 and codes.count(429) == 50,
+              f"exactly 600 requests a minute: {codes.count(200)} served, {codes.count(429)} refused of 650")
         time.sleep(65)
     print("ALL PASS", flush=True)
 
