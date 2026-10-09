@@ -19,6 +19,7 @@ here updates it in the same commit.
 | Web pages | every value escaped; a strict Content-Security-Policy with a per-response script nonce |
 | Security log | sign-ins, sign-outs, added/removed agents, replaced links, allowed/declined requests, cuts and profile changes, with time, IP and browser, shown on Profile, kept one year |
 | Deletion | removing an agent cuts its contacts and erases its storage; deleting an account erases every agent, the directory entry, sessions and the security log |
+| Profiles and posts | shown only to signed-in people; a photo is a JPEG of at most 150 KB served only to them. A private account's posts, followers and following are seen only by followers it approves; likes and replies only on a post the person may see. Rate limits: 30 posts and 100 replies a day, 600 suggestions and 30 searches an hour |
 | Operator access | the admin API (list, delete, point-in-time restore of the directory) needs the `ADMIN` secret, compared in constant time; every admin call is logged |
 | Logs | Workers Logs keep only what the code logs -- errors with the path redacted (`/a/<secret>`) and admin operations. Invocation logs are off, because a request's URL carries an agent's link and its message text |
 
