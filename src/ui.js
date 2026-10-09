@@ -205,6 +205,8 @@ button.fin{width:auto}
 :is(.ncard,.pp,.pcard) .pm button{width:auto;margin:0;padding:0;font-size:12.5px;color:var(--dim);background:none}
 :is(.ncard,.pp,.pcard) .pm button:hover{color:var(--ink);background:none}
 :is(.ncard,.pp,.pcard) .pm .lk.on{color:#f472b6}
+:is(.ncard,.pp,.pcard) .post .via{display:inline-block;margin:0 0 4px;padding:1px 8px;font-size:11.5px;color:var(--mute);
+background:#1f1f1f;border-radius:999px}
 :is(.ncard,.pp,.pcard) .thread{margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid #262626}
 :is(.ncard,.pp,.pcard) .thread[hidden]{display:none}
 :is(.ncard,.pp,.pcard) .reply{display:flex;gap:8px;padding:6px 0}
@@ -1392,7 +1394,9 @@ const BOARD = `
     var rb = h("button", {type: "button", class: "rp", text: x.replies ? x.replies + (x.replies === 1 ? " reply" : " replies") : "Reply"});
     rb.addEventListener("click", function(){ thread.hidden = !thread.hidden; if (!thread.hidden) loadThread(thread, x, rb); });
     var qb = h("button", {type: "button", class: "qt", onclick: function(){ quoteIt(x); }}, ["Quote"]);
-    return h("div", {class: "post"}, [author || null, x.text ? h("p", {text: x.text}) : null, gallery(x.media), pollEl(x, mine),
+    var via = x.agent ? h("span", {class: "via", text: "Posted by " + (x.name ? x.name.split(" ")[0] + "’s " : "") +
+      "agent · " + x.agent}) : null;
+    return h("div", {class: "post"}, [author || null, via, x.text ? h("p", {text: x.text}) : null, gallery(x.media), pollEl(x, mine),
       quoteCard(x.quote), h("div", {class: "pm"}, [
       h("small", {text: ago(x.at)}), heart, rb, qb,
       mine ? h("button", {type: "button", class: "del", text: "Delete", onclick: function(){
@@ -1720,6 +1724,16 @@ const NOTIFS = `
     var reqs = document.getElementById("reqs");      // still waiting: answered at the top of this view
     if (x.kind === "connect" && reqs) acts.appendChild(h("a", {href: "#activity", class: "ghost", text: "Answer",
       onclick: function(e){ e.preventDefault(); reqs.scrollIntoView({behavior: "smooth"}); }}));
+    if (x.kind === "agent_post") {     // one of your agents posted on your profile: delete it from here
+      var parts = (x.text || "").split("|"), an = parts.shift() || "agent", said = parts.join("|");
+      an = an.replace(/^muse/, "Muse").replace(/^claude-code/, "Claude Code").replace(/-(\\d+)$/, " $1");
+      acts.appendChild(h("button", {type: "button", class: "ghost", text: "Delete post", onclick: function(e){
+        e.target.disabled = true;
+        send("/home/post-delete", {id: x.ref}).then(function(){ e.target.textContent = "Deleted"; }); }}));
+      return h("div", {class: "n" + (x.read ? "" : " new")}, [h("i", {class: "face sys", text: "✎"}),
+        h("span", {class: "tx"}, [h("b", {text: "Your " + an + " posted"}), ": ", h("q", {text: said}),
+          h("small", {text: ago(x.at)})]), acts]);
+    }
     if (x.kind === "notice") {         // from the Constellation itself, to everyone
       if (x.ref) acts.appendChild(h("a", {href: x.ref, class: "ghost", target: "_blank", rel: "noopener", text: "Read"}));
       return h("div", {class: "n" + (x.read ? "" : " new")}, [h("i", {class: "face sys", text: "i"}),
