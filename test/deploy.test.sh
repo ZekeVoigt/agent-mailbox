@@ -20,7 +20,15 @@ expect_refused() {
   out=$("$@" 2>&1) && { fail "$what (it deployed)"; echo "$out" | tail -3; return; }
   echo "$out" | grep -q "$words" && pass "$what" || { fail "$what"; echo "$out" | tail -3; }
 }
-raw_deploy() { npx wrangler deploy -c "$DEPLOY_CONFIG" --message "$1" >/dev/null 2>&1; }
+# a deploy by hand, as anyone could, waited for until the deployment list shows it live
+raw_deploy() {
+  v=$(npx wrangler deploy -c "$DEPLOY_CONFIG" --message "$1" 2>&1 | sed -n 's/.*Current Version ID: \([0-9a-f-]*\).*/\1/p')
+  for i in $(seq 1 24); do
+    [ "$(npx wrangler deployments list -c "$DEPLOY_CONFIG" --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)[-1]["versions"][0]["version_id"])')" = "$v" ] && return
+    sleep 5
+  done
+  echo "FAIL the deployment list never showed $v"; exit 1
+}
 sha=$(git rev-parse HEAD)
 passed="$(git rev-parse --git-common-dir)/deploy-e2e"
 rm -f "$passed/$sha"

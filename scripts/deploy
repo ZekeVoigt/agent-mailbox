@@ -12,8 +12,10 @@
 #     deploy you would silently overwrite; merge their commit first (a live version with no
 #     commit recorded, from before this script, must be named: DEPLOY_OVER=<its version id>),
 #   - (production) staging's e2e has not passed for this exact commit.
-# Every deploy is stamped "git:<sha>", and afterwards the live version is read back to confirm it
-# is this one.
+# Every deploy is stamped "git:<sha>". Afterwards the deployment list is read back until it shows
+# this version live, and the version it replaced must be the one checked above: Cloudflare's list
+# can lag a deploy by seconds, so a deploy made just before this one could have been missed by the
+# check -- then this says so, loudly, with how to undo it.
 #
 # Needs: CLERK_SECRET_KEY and ADMIN (the target's support key) for the e2e; unset
 # CLOUDFLARE_API_TOKEN (wrangler login). DEPLOY_CONFIG / DEPLOY_URL point it at another worker
@@ -48,10 +50,14 @@ trap 'rm -rf "$lock"' EXIT INT TERM
 sha=$(git rev-parse HEAD)
 passed="$(git rev-parse --git-common-dir)/deploy-e2e"
 
+# the live version, or with an argument, the version deployed just before that one
 live_version() { wr deployments list --json 2>/dev/null | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
-print(d[-1]["versions"][0]["version_id"] if d else "")'; }
+d, mine = json.load(sys.stdin), sys.argv[1] if len(sys.argv) > 1 else ""
+v = [x["versions"][0]["version_id"] for x in d]
+if not mine: print(v[-1] if v else "")
+elif mine in v: i = v.index(mine); print(v[i - 1] if i else "none")
+else: print("")' "$@"; }
 message_of() { wr versions view "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 print((json.load(sys.stdin).get("annotations") or {}).get("workers/message", ""))'; }
@@ -82,9 +88,12 @@ echo "deploying $(git log -1 --format='%h %s' | cut -c1-90) to $target (over ${l
 out=$(wr deploy --message "git:$sha" 2>&1) || { echo "$out" >&2; refuse "wrangler deploy failed"; }
 mine=$(echo "$out" | sed -n 's/.*Current Version ID: \([0-9a-f-]*\).*/\1/p')
 [ -n "$mine" ] || { echo "$out" >&2; refuse "no version id in wrangler's output"; }
-now=$(live_version)
+now=""
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do now=$(live_version); [ "$now" = "$mine" ] && break; sleep 5; done
 [ "$now" = "$mine" ] || refuse "after deploying $mine, $target runs $now: another deploy landed at the same moment. Look before doing anything else"
 [ "$(message_of "$now")" = "git:$sha" ] || refuse "the live version $now does not carry git:$sha"
+before=$(live_version "$mine")
+[ "$before" = "${live:-none}" ] || refuse "this deploy replaced $before, not $live (the version checked): a deploy landed between the check and this one, and may have been overwritten. Look at $before now; undo with: npx wrangler rollback $before -c $config $env_flag"
 echo "live: $target runs $mine (git:$(git log -1 --format=%h)); undo: npx wrangler rollback ${live:-<none>} -c $config $env_flag"
 
 if [ "$target" = staging ]; then
