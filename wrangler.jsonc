@@ -17,10 +17,12 @@
   "durable_objects": { "bindings": [
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
-    { "name": "AGENT", "class_name": "Agent" }] },
+    { "name": "AGENT", "class_name": "Agent" },
+    { "name": "LEDGER", "class_name": "Ledger" }] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Box"] },
-    { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }],
+    { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
+    { "tag": "v3", "new_sqlite_classes": ["Ledger"] }],
   "env": {
     // its own Worker and its own Durable Objects: nothing shared with production but Clerk's
     // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
@@ -32,10 +34,12 @@
       "durable_objects": { "bindings": [
         { "name": "BOX", "class_name": "Box" },
         { "name": "DIR", "class_name": "Directory" },
-        { "name": "AGENT", "class_name": "Agent" }] },
+        { "name": "AGENT", "class_name": "Agent" },
+    { "name": "LEDGER", "class_name": "Ledger" }] },
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Box"] },
-        { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }]
+        { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
+    { "tag": "v3", "new_sqlite_classes": ["Ledger"] }]
     }
   }
 }

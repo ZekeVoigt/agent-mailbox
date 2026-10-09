@@ -331,6 +331,30 @@ export class Directory {
       return json({ok: true});
     }
     if (p === "/agents-of") return json(this.all("SELECT id FROM agent WHERE handle = ?", b.handle));
+    if (p === "/person-of") {         // for the operator: is it an e2e account, and which account it is
+      const x = this.one("SELECT test, at FROM person WHERE handle = ?", b.handle);
+      return json(x && {test: !!x.test, at: x.at});
+    }
+    // after a restore: every deletion the ledger recorded since is made again
+    if (p === "/reapply") {
+      for (const {handle: h, at} of b.persons || []) {
+        // that account exactly (its handle and the moment it was made), never another that took the handle
+        const person = this.one("SELECT clerk FROM person WHERE handle = ? AND at = ?", h, at);
+        if (!person) continue;
+        this.forget(person.clerk);
+        this.unfollowAll(h);
+        this.sql.exec("DELETE FROM invite WHERE handle = ? OR claimed_by = ?", h, h);
+        for (const t of ["photo", "agent", "person"]) this.sql.exec(`DELETE FROM ${t} WHERE handle = ?`, h);
+        this.sql.exec("DELETE FROM silence WHERE target = ?", h);
+      }
+      for (const a of b.agents || []) {
+        this.sql.exec("DELETE FROM agent WHERE id = ?", a);
+        this.sql.exec("DELETE FROM invite WHERE agent = ?", a);
+        this.sql.exec("UPDATE person SET primary_agent = NULL WHERE primary_agent = ?", a);
+      }
+      for (const h of this.all("SELECT handle FROM person WHERE primary_agent IS NULL")) this.pickPrimary(h.handle);
+      return json({ok: true});
+    }
     if (p === "/delete") {            // a person, their agents' links, sessions and security log
       const person = this.one("SELECT clerk FROM person WHERE handle = ?", b.handle);
       if (person) this.forget(person.clerk);
@@ -370,7 +394,7 @@ export class Directory {
       this.sql.exec("UPDATE invite SET done = 1 WHERE code = ?", b.code);
       return json({ok: true});
     }
-    if (p === "/list") return json(this.all("SELECT handle, name, at, clerk FROM person ORDER BY at"));
+    if (p === "/list") return json(this.all("SELECT handle, name, at, clerk, test FROM person ORDER BY at"));
     if (p === "/links-set") {
       this.sql.exec("UPDATE person SET links = ? WHERE handle = ?", JSON.stringify(b.links || []), b.handle);
       return json({ok: true});
@@ -628,6 +652,41 @@ export class Directory {
     if (pick) this.sql.exec("UPDATE person SET primary_agent = ? WHERE handle = ?", pick.id, handle);
   }
 }
+
+// -- the ledger: every deletion, kept apart from the directory ----------------------------------
+//
+// A point-in-time restore rolls the directory back whole, which would bring back every account and
+// agent deleted since. The ledger is another Durable Object, untouched by that restore: after it,
+// every deletion recorded since the restore point is made again (/admin/restore). A restore lands up
+// to tens of seconds before the time asked (seen: an account made 5 s before it was lost), so the
+// deletions of RESTORE_MARGIN before it are made again too; each names its account exactly (handle
+// and the moment it was made) or its agent's id, so making one again can never touch anyone else.
+const RESTORE_MARGIN = 10 * 60e3;
+
+export class Ledger {
+  constructor(state) {
+    this.sql = state.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS deleted (kind TEXT, key TEXT, at INTEGER);
+      CREATE INDEX IF NOT EXISTS deleted_at ON deleted (at);`);
+  }
+  async fetch(req) {
+    const p = new URL(req.url).pathname, b = await req.json();
+    if (p === "/record") {
+      this.sql.exec("INSERT INTO deleted VALUES (?, ?, ?)", b.kind, b.key, Date.now());
+      return json({ok: true});
+    }
+    if (p === "/since") {
+      const rows = this.sql.exec("SELECT kind, key FROM deleted WHERE at >= ?", b.at - RESTORE_MARGIN).toArray();
+      const person = k => { try { const x = JSON.parse(k); return x && x.handle ? [x] : []; } catch { return []; } };
+      return json({persons: rows.filter(r => r.kind === "person").flatMap(r => person(r.key)),
+        agents: rows.filter(r => r.kind === "agent").map(r => r.key)});
+    }
+    return json({error: "unknown"}, 404);
+  }
+}
+const ledger = env => env.LEDGER.get(env.LEDGER.idFromName("ledger"));
+// kind "person": key {handle, at} (the moment the account was made); kind "agent": its id
+const recordDeleted = (env, kind, key) => call(ledger(env), "/record", {kind, key: kind === "person" ? JSON.stringify(key) : key});
 
 // -- one agent: its conversations, requests and presence ----------------------------------------
 //
@@ -1305,6 +1364,7 @@ async function postHome(req, env, url) {
   if (f.do === "delete-account") {
     if (String(f.confirm || "").trim().replace(/^@/, "").toLowerCase() !== person.handle)
       return home(env, person, ses, `<p>Type @${person.handle} to delete the account.</p>`, "settings");
+    await recordDeleted(env, "person", {handle: person.handle, at: person.at});
     for (const a of person.agents) await wipeAgent(env, a.id);
     await call(dir(env), "/delete-me", {clerk: ses.clerk});
     await revokeClerkSessions(env, ses.clerk);
@@ -1343,6 +1403,7 @@ async function postHome(req, env, url) {
       [{id: a.id, name: a.name, link, prefs: was.prefs}], true));
   }
   if (f.do === "remove-agent") {
+    await recordDeleted(env, "agent", a.id);
     await call(dir(env), "/remove-agent", {id: a.id, handle: person.handle});
     await wipeAgent(env, a.id);
     await log(`Removed ${a.name}`);
@@ -1529,6 +1590,77 @@ async function canvasRoute(req, env, url) {
   return text("Unknown address.", 404);
 }
 
+// -- the operator: two keys. ADMIN, the support key a session may hold, lists accounts and acts
+// only on e2e accounts (marked by Clerk's backend). ADMIN_OWNER, the owner's alone, is needed for
+// anything that touches a real person: deleting them, reading their contacts, a notice to everyone,
+// restoring the directory. With no ADMIN_OWNER set, those are refused outright. Every call is logged.
+
+async function adminRoute(req, env, op) {
+  const key = req.headers.get("x-admin") || "";
+  const owner = !!env.ADMIN_OWNER && await sameSecret(key, env.ADMIN_OWNER);
+  if (!owner && !(env.ADMIN && await sameSecret(key, env.ADMIN))) return text("Not allowed.", 403);
+  const b = await req.json().catch(() => ({}));
+  console.log(JSON.stringify({at: "admin", op, key: owner ? "owner" : "support", handle: b.handle || "",
+    ip: who(req).ip}));
+  const ownerOnly = () => text("Not allowed: that needs the owner's key.", 403);
+  const handle = HANDLE_RE.test(b.handle || "") ? b.handle : null;
+  // support may act on an e2e account only; the owner on anyone
+  const who_ = handle && await call(dir(env), "/person-of", {handle});
+  const mayTouch = async () => owner || !!(who_ && who_.test);
+  if (op === "list") return json(await call(dir(env), "/list", {}));
+  if (op === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
+  if (op === "age-person" && env.TEST_SITE === "1" && handle)
+    return json(await call(dir(env), "/test-age-person", {handle}));
+  if (op === "age-link" && handle) {
+    if (!await mayTouch()) return ownerOnly();
+    const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
+    if (!a) return text("No such agent.", 404);
+    return json(await call(agentObj(env, a.id), "/test-age"));
+  }
+  if (op === "remove-agent" && handle) {
+    if (!await mayTouch()) return ownerOnly();
+    const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
+    if (!a) return text("No such agent.", 404);
+    await recordDeleted(env, "agent", a.id);
+    await call(dir(env), "/remove-agent", {id: a.id, handle});
+    await wipeAgent(env, a.id);
+    return json({removed: a.id});
+  }
+  if (op === "delete" && handle) {
+    if (!await mayTouch()) return ownerOnly();
+    if (who_) await recordDeleted(env, "person", {handle, at: who_.at});
+    for (const a of await call(dir(env), "/agents-of", {handle})) await wipeAgent(env, a.id);
+    return json(await call(dir(env), "/delete", {handle}));
+  }
+  if (!owner) return ownerOnly();
+  // -- the owner's alone ------------------------------------------------------------------------
+  if (op === "agents" && handle) {    // a person's agents and contacts, for support
+    const out = [];
+    for (const a of await call(dir(env), "/agents-of", {handle})) {
+      const st = await call(agentObj(env, a.id), "/status");
+      out.push({id: a.id, name: st.me && st.me.name, seen: st.seen || null,
+        own: st.peers.filter(x => x.own).length, others: st.peers.filter(x => !x.own).map(x =>
+          `${x.handle}/${x.name}:${x.state}`)});
+    }
+    return json(out);
+  }
+  if (op === "notice" && clean(b.text, 300)) {
+    const ref = /^https:\/\/(ai-andromeda\.com|agents\.ai-andromeda\.com)\//.test(b.link || "") ? b.link : "";
+    return json(await call(dir(env), "/notice-all", {text: clean(b.text, 300), ref}));
+  }
+  if (op === "restore" && Number(b.at) > 0) {
+    // the directory as it was at `at`, then every deletion since made again
+    const at = Number(b.at), gone = await call(ledger(env), "/since", {at});
+    try { await call(dir(env), "/restore", {at}); } catch {}
+    let again = null;
+    for (let i = 0; i < 20 && !again; i++) {
+      try { again = (await call(dir(env), "/reapply", gone)).ok; } catch { await new Promise(r => setTimeout(r, 500)); }
+    }
+    return json({restored: at, deleted_again: gone, reapplied: !!again});
+  }
+  return text("Unknown.", 404);
+}
+
 async function route(req, env) {
   const url = new URL(req.url), parts = url.pathname.split("/").filter(Boolean);
   const q = Object.fromEntries(url.searchParams.entries());
@@ -1583,49 +1715,7 @@ async function route(req, env) {
     await audit(env, req, ses.clerk, `Claimed @${got.handle}`);
     return Response.redirect(`${url.origin}/home`, 303);
   }
-  if (parts[0] === "admin" && req.method === "POST") {   // the operator only
-    if (!env.ADMIN || !(await sameSecret(req.headers.get("x-admin") || "", env.ADMIN)))
-      return text("Not allowed.", 403);
-    const b = await req.json().catch(() => ({}));
-    console.log(JSON.stringify({at: "admin", op: parts[1] || "", ip: who(req).ip}));
-    if (parts[1] === "list") return json(await call(dir(env), "/list", {}));
-    if (parts[1] === "agents" && HANDLE_RE.test(b.handle || "")) {   // a person's agents, for support
-      const out = [];
-      for (const a of await call(dir(env), "/agents-of", {handle: b.handle})) {
-        const st = await call(agentObj(env, a.id), "/status");
-        out.push({id: a.id, name: st.me && st.me.name, seen: st.seen || null,
-          own: st.peers.filter(x => x.own).length, others: st.peers.filter(x => !x.own).map(x =>
-            `${x.handle}/${x.name}:${x.state}`)});
-      }
-      return json(out);
-    }
-    if (parts[1] === "notice" && clean(b.text, 300)) {
-      const ref = /^https:\/\/(ai-andromeda\.com|agents\.ai-andromeda\.com)\//.test(b.link || "") ? b.link : "";
-      return json(await call(dir(env), "/notice-all", {text: clean(b.text, 300), ref}));
-    }
-    if (parts[1] === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
-    if (parts[1] === "age-person" && env.TEST_SITE === "1" && HANDLE_RE.test(b.handle || ""))
-      return json(await call(dir(env), "/test-age-person", {handle: b.handle}));
-    if (parts[1] === "age-link" && HANDLE_RE.test(b.handle || "")) {
-      const a = (await call(dir(env), "/agents-of", {handle: b.handle})).find(x => x.id === b.id);
-      if (!a) return text("No such agent.", 404);
-      return json(await call(agentObj(env, a.id), "/test-age"));
-    }
-    if (parts[1] === "remove-agent" && HANDLE_RE.test(b.handle || "")) {
-      await call(dir(env), "/remove-agent", {id: b.id, handle: b.handle});
-      await wipeAgent(env, b.id);
-      return json({removed: b.id});
-    }
-    if (parts[1] === "restore" && Number(b.at) > 0) {
-      try { await call(dir(env), "/restore", {at: Number(b.at)}); } catch {}
-      return json({restored: Number(b.at)});
-    }
-    if (parts[1] === "delete" && HANDLE_RE.test(b.handle || "")) {
-      for (const a of await call(dir(env), "/agents-of", {handle: b.handle})) await wipeAgent(env, a.id);
-      return json(await call(dir(env), "/delete", {handle: b.handle}));
-    }
-    return text("Unknown.", 404);
-  }
+  if (parts[0] === "admin" && req.method === "POST") return adminRoute(req, env, parts[1] || "");
   // the first test mailbox stays reachable while it is in use
   if (parts[0] === "m") return env.BOX.get(env.BOX.idFromName(parts[1] || "")).fetch(req);
   return text("Unknown address.", 404);

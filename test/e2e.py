@@ -123,10 +123,15 @@ def person(name, handle, agents, invite=None):
     return dict(zip(names, links)), op, u["id"]
 
 
-def admin(op, body):
-    with R.urlopen(R.Request(B + "/admin/" + op, json.dumps(body).encode(),
-                             headers={**UA, "x-admin": os.environ["ADMIN"]}), timeout=20) as r:
-        return json.loads(r.read() or b"{}")
+def admin(op, body, key=None):
+    """An operator call with the support key (ADMIN), or `key` (the owner's): its JSON, or the
+    HTTP status it was refused with."""
+    try:
+        with R.urlopen(R.Request(B + "/admin/" + op, json.dumps(body).encode(),
+                                 headers={**UA, "x-admin": key or os.environ["ADMIN"]}), timeout=60) as r:
+            return json.loads(r.read() or b"{}")
+    except R.HTTPError as e:
+        return e.code
 
 
 def get_as(url, ua):
@@ -330,8 +335,9 @@ def main():
         fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
         check(get_as(fresh, UA["User-Agent"])[0] == 200, "the new link works")
         if TEST_SITE:                 # a notice reaches every account: never from a test on production
-          R.urlopen(R.Request(B + "/admin/notice", json.dumps({"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}).encode(),
-                            headers={**UA, "x-admin": os.environ["ADMIN"]}), timeout=20).read()
+          note = {"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}
+          check(admin("notice", note) == 403, "a notice to everyone needs the owner's key: the support key is refused")
+          admin("notice", note, os.environ["ADMIN_OWNER"])
           nt = [n for n in json.loads(get(B + "/home/notifs", s2o)) if n["kind"] == "notice"]
           check(nt and nt[0]["text"] == "e2e notice" and nt[0]["ref"].endswith("/terms/"), "an operator notice reaches everyone's Activity")
     # the canvas: a profile with a photo, found by name, and asked to connect from the page
@@ -523,6 +529,43 @@ def main():
           "and Zeke's Muse can no longer message it")
     post(B + "/signout", {}, zo)
     check("id=\"cf\"" in get(B + "/home", zo), "signing out ends the session")
+    # the operator's keys: support acts on e2e accounts only; the owner's key for real people, and
+    # a restore that brings back what was lost but never an account deleted since
+    if TEST_SITE and os.environ.get("ADMIN") and os.environ.get("ADMIN_OWNER"):
+        OWN = os.environ["ADMIN_OWNER"]
+        check(admin("list", {}, "not-a-key") == 403, "a wrong key is refused")
+        rows = admin("list", {})
+        real = next(r["handle"] for r in rows if r["handle"] == f"ip{run}x0")
+        check(not next(r for r in rows if r["handle"] == real)["test"]
+              and next(r for r in rows if r["handle"] == f"zeke{run}")["test"],
+              "the list says which accounts are e2e accounts")
+        check(admin("delete", {"handle": real}) == 403 and admin("agents", {"handle": f"zeke{run}"}) == 403
+              and admin("restore", {"at": 1}) == 403,
+              "the support key cannot delete a real person, read anyone's contacts or restore")
+        check(admin("agents", {"handle": f"zeke{run}"}, OWN)[0]["id"], "the owner's key reads a person's agents")
+        # a restore: Sam's post, made a minute before the restore point and deleted after it, comes
+        # back; accounts deleted just before the point (where the restore really lands) and after it don't
+        jpost(B + "/home/post", {"text": f"restore-probe-{run}"}, so)
+        g1, g1o, g1id = person("Gone Before", f"gonea{run}", ["muse"])
+        g2, g2o, g2id = person("Gone After", f"goneb{run}", ["muse"])
+        time.sleep(60)
+        post(B + "/home", {"do": "delete-account", "confirm": f"@gonea{run}"}, g1o)
+        time.sleep(3); at = int(time.time() * 1000); time.sleep(3)
+        pid = json.loads(get(B + f"/home/board/sam{run}", so))["posts"][0]["id"]
+        jpost(B + "/home/post-delete", {"id": pid}, so)
+        post(B + "/home", {"do": "delete-account", "confirm": f"@goneb{run}"}, g2o)
+        check(admin("delete", {"handle": real}, OWN).get("deleted") == 1, "the owner's key deletes a real account")
+        out = admin("restore", {"at": at}, OWN)
+        again = [x["handle"] for x in out["deleted_again"]["persons"]]
+        check(out["reapplied"] and {f"gonea{run}", f"goneb{run}", real} <= set(again),
+              "a restore makes every deletion since (and just before) its point again")
+        handles = [r["handle"] for r in admin("list", {})]
+        posts = json.loads(get(B + f"/home/board/sam{run}", so))["posts"]
+        check(any(x["text"] == f"restore-probe-{run}" for x in posts),
+              "the restore brought back what was lost after its point (Sam's post)")
+        check(not {f"gonea{run}", f"goneb{run}", real} & set(handles)
+              and refused(lambda: get(g1["muse"])) and refused(lambda: get(g2["muse"])),
+              "and never an account deleted since, or in the seconds before it: not listed, links dead")
     print("ALL PASS", flush=True)
 
 
