@@ -50,12 +50,17 @@ trap 'rm -rf "$lock"' EXIT INT TERM
 sha=$(git rev-parse HEAD)
 passed="$(git rev-parse --git-common-dir)/deploy-e2e"
 
-# the live version, or with an argument, the version deployed just before that one
+# the live version, or with an argument, the version deployed just before that one; with
+# "code", the latest version that carried code: a secret put makes a new version of the same
+# code without its message, so it is looked past
 live_version() { wr deployments list --json 2>/dev/null | python3 -c '
 import json, sys
 d, mine = json.load(sys.stdin), sys.argv[1] if len(sys.argv) > 1 else ""
 v = [x["versions"][0]["version_id"] for x in d]
-if not mine: print(v[-1] if v else "")
+code = [x["versions"][0]["version_id"] for x in d
+        if (x.get("annotations") or {}).get("workers/triggered_by") != "secret"]
+if mine == "code": print(code[-1] if code else "")
+elif not mine: print(v[-1] if v else "")
 elif mine in v: i = v.index(mine); print(v[i - 1] if i else "none")
 else: print("")' "$@"; }
 message_of() { wr versions view "$1" --json 2>/dev/null | python3 -c '
@@ -64,7 +69,7 @@ print((json.load(sys.stdin).get("annotations") or {}).get("workers/message", "")
 
 live=$(live_version)
 if [ -n "$live" ]; then
-  msg=$(message_of "$live")
+  msg=$(message_of "$(live_version code)")
   case "$msg" in
     git:*)
       was=${msg#git:}

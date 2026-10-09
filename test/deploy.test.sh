@@ -49,6 +49,12 @@ expect_refused "a live commit this one does not contain is refused" "merge it fi
 
 raw_deploy "git:$sha"
 expect_refused "production before staging passed is refused" "has not passed" scripts/deploy production
+# a secret put makes a new version of the same code without its message: looked past, not refused
+python3 -c "import secrets;print(secrets.token_urlsafe(16))" | npx wrangler secret put DEPLOY_TEST_SECRET -c "$DEPLOY_CONFIG" >/dev/null 2>&1
+sleep 15
+out=$(DEPLOY_SETTLE_S=0 scripts/deploy production 2>&1)
+echo "$out" | grep -q "has not passed" && pass "a version made by a secret put is looked past, to the code's own commit" ||
+  { fail "a secret put's version"; echo "$out" | tail -2; }
 
 mkdir -p "$DEPLOY_LOCK"; sleep 300 & echo $! > "$DEPLOY_LOCK/pid"; holder=$!
 expect_refused "a second deploy while one runs is refused" "another deploy is running" scripts/deploy staging
