@@ -19,6 +19,9 @@ export const tileOf = name => TILES.find(t => name === t.id || name.startsWith(t
 export const logo = name => (MARKS[tileOf(name)?.id] || MARKS.agent);
 const shownName = name => tileOf(name)?.name || name;
 
+// the footer: the credit bottom left, Privacy and Terms on their own in the bottom right corner
+const FOOT = '<div class="foot">' + CREDIT.replace(' · <a href="https://ai-andromeda.com/privacy/"',
+  '</p><p class="credit legal"><a href="https://ai-andromeda.com/privacy/"') + '</div>';
 const ADD_ICON = ICONS.add;
 const HOUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
   'stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10.5 12 3.5l8.5 7V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5A1.5 1.5 0 0 1 3.5 19z"/></svg>';
@@ -41,7 +44,7 @@ export function page(title, body, {kind = "start", step = "card", wide = false, 
 content="width=device-width, initial-scale=1"><meta name="referrer" content="same-origin">
 <link rel="icon" type="image/png" sizes="32x32" href="https://ai-andromeda.com/icon.png?v=2">
 <title>${esc(title)}</title><style>@layer base{${STYLE}}${EXTRA}</style>${extraIcons}</head>
-<body data-kind="${kind}" data-step="${step}">${SKY}<main class="wrap${wide ? " wide" : ""}">${body}</main>${CREDIT}
+<body data-kind="${kind}" data-step="${step}">${SKY}<main class="wrap${wide ? " wide" : ""}">${body}</main>${FOOT}
 <script nonce="${nonce}">${SCRIPT}</script>${frameScript ? `<script nonce="${nonce}">${frameScript}</script>` : ""}${clerk ? `<script nonce="${nonce}">${clerk}</script>
 <script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
 src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}</body></html>`;
@@ -589,6 +592,9 @@ filter:drop-shadow(0 4px 16px rgba(0,0,0,.4));animation:burst .9s ease-out forwa
 .fempty button{width:auto;margin:8px 0 0;padding:9px 20px}
 @media (max-width:760px){.main:has(>#home:not([hidden])){padding:12px 0 28px}.ftop,.frow,.fhd,.facts,.flikes,.cap,.fmore,.fpost .thread,.fpost .ppoll,.fpost .pquote,.ftext{margin-left:12px;margin-right:12px}
 .facts{margin-left:4px}.car{border-radius:0}.dots{margin-top:8px}}
+
+.credit.legal{left:auto;right:24px}
+@media (max-width:760px){.foot .credit{margin:4px 0 0}.foot .credit:first-child{margin-top:14px}}
 `;
 
 const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${cls}">${
