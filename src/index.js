@@ -29,6 +29,10 @@ const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER
 const MEDIA_TYPES = {"image/jpeg": "i", "image/png": "i", "image/webp": "i", "image/gif": "i",
   "video/mp4": "v", "video/webm": "v", "video/quicktime": "v"};
 const IMAGE_MAX = 8e6, VIDEO_MAX = 90e6, UPLOADS_PER_HOUR = 60, MEDIA_ID = /^[A-Za-z0-9_-]{16}$/;
+// polls (2 to 4 choices of 25 characters, open 1 hour to 7 days), scheduled posts (up to 30 days
+// ahead, 20 waiting), and GIFs found through GIPHY (GIPHY_KEY), each kept in R2 as a looping MP4
+const POLL_HOURS = [1, 24, 72, 168], MAX_CHOICE = 25, SCHEDULE_MAX_MS = 30 * 86400e3, MAX_SCHEDULED = 20,
+  GIF_MAX = 15e6, GIFS_PER_HOUR = 300;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -164,6 +168,10 @@ export class Directory {
     try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN links TEXT DEFAULT '[]'"); } catch {}
     try { this.sql.exec("ALTER TABLE post ADD COLUMN media TEXT DEFAULT '[]'"); } catch {}
+    try { this.sql.exec("ALTER TABLE post ADD COLUMN poll TEXT DEFAULT ''"); } catch {}
+    try { this.sql.exec("ALTER TABLE post ADD COLUMN quote TEXT DEFAULT ''"); } catch {}
+    this.sql.exec("CREATE TABLE IF NOT EXISTS vote (post TEXT, handle TEXT, choice INTEGER, at INTEGER, " +
+      "PRIMARY KEY (post, handle))");
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -178,13 +186,15 @@ export class Directory {
     for (const x of this.all("SELECT id FROM post WHERE handle = ?", handle)) this.dropPost(x.id);
     this.sql.exec("DELETE FROM follow WHERE follower = ? OR followee = ?", handle, handle);
     this.sql.exec("DELETE FROM likes WHERE handle = ?", handle);
+    this.sql.exec("DELETE FROM vote WHERE handle = ?", handle);
     this.sql.exec("DELETE FROM reply WHERE handle = ?", handle);
     this.sql.exec("DELETE FROM notif WHERE handle = ? OR actor = ?", handle, handle);
   }
   dropPost(id) {
     this.sql.exec("DELETE FROM likes WHERE post = ?", id);
     this.sql.exec("DELETE FROM reply WHERE post = ?", id);
-    this.sql.exec("DELETE FROM notif WHERE ref = ? AND kind IN ('like', 'reply')", id);
+    this.sql.exec("DELETE FROM vote WHERE post = ?", id);
+    this.sql.exec("DELETE FROM notif WHERE ref = ? AND kind IN ('like', 'reply', 'quote')", id);
     this.sql.exec("DELETE FROM post WHERE id = ?", id);
   }
   // who may see a person's posts, followers and following: them, anyone if public, else an
@@ -206,13 +216,38 @@ export class Directory {
     this.sql.exec("DELETE FROM notif WHERE handle = ? AND id NOT IN (SELECT id FROM notif WHERE " +
       "handle = ? ORDER BY at DESC LIMIT 200)", handle, handle);
   }
-  postsFor(viewer, where, ...args) {  // posts with their like and reply counts, as viewer sees them
-    return this.all("SELECT t.id, t.text, t.at, t.handle, t.media, p.name, f.at photo, " +
+  // posts with their like and reply counts, poll and quoted post, as viewer sees them; `where`
+  // continues "WHERE t.at <= now" (a scheduled post is out only once its time comes)
+  postsFor(viewer, where, ...args) {
+    return this.all("SELECT t.id, t.text, t.at, t.handle, t.media, t.poll, t.quote, p.name, f.at photo, " +
       "(SELECT count(*) FROM likes l WHERE l.post = t.id) likes, " +
       "EXISTS (SELECT 1 FROM likes l WHERE l.post = t.id AND l.handle = ?) liked, " +
       "(SELECT count(*) FROM reply r WHERE r.post = t.id) replies " +
       "FROM post t JOIN person p ON p.handle = t.handle LEFT JOIN photo f ON f.handle = t.handle " +
-      where, viewer, ...args).map(x => ({...x, liked: !!x.liked}));
+      "WHERE t.at <= ? " + where, viewer, Date.now(), ...args).map(x => this.dress(viewer, x));
+  }
+  dress(viewer, x) {                  // a post row -> its poll's standing and its quoted post
+    x.liked = !!x.liked;
+    x.poll = this.pollOf(viewer, x);
+    const q = x.quote;
+    x.quote = null;
+    if (q) {
+      const y = this.one("SELECT t.id, t.text, t.at, t.handle, t.media, p.name, f.at photo FROM post t JOIN " +
+        "person p ON p.handle = t.handle LEFT JOIN photo f ON f.handle = t.handle WHERE t.id = ? AND t.at <= ?",
+        q, Date.now());
+      x.quote = y && this.canSee(viewer, y.handle) ? y : {gone: true};
+    }
+    return x;
+  }
+  pollOf(viewer, x) {
+    let o = null;
+    try { o = x.poll ? JSON.parse(x.poll) : null; } catch {}
+    if (!o) return null;
+    const counts = o.o.map(() => 0);
+    for (const v of this.all("SELECT choice, count(*) n FROM vote WHERE post = ? GROUP BY choice", x.id))
+      if (counts[v.choice] !== undefined) counts[v.choice] = v.n;
+    const mine = this.one("SELECT choice FROM vote WHERE post = ? AND handle = ?", x.id, viewer);
+    return {options: o.o, counts, ends: o.ends, voted: mine ? mine.choice : null};
   }
   forget(clerk) {                     // everything held about a sign-in but the person row
     if (!clerk) return;
@@ -415,8 +450,8 @@ export class Directory {
       x.agents = this.all("SELECT name FROM agent WHERE handle = ? ORDER BY at", b.handle).map(a => a.name);
       x.followers = this.one("SELECT count(*) n FROM follow WHERE followee = ? AND state = 'on'", b.handle).n;
       x.following = this.one("SELECT count(*) n FROM follow WHERE follower = ? AND state = 'on'", b.handle).n;
-      x.posts_n = this.one("SELECT count(*) n FROM post WHERE handle = ?", b.handle).n;
-      x.posts = see ? this.postsFor(b.viewer, "WHERE t.handle = ? ORDER BY t.at DESC LIMIT 30", b.handle) : [];
+      x.posts_n = this.one("SELECT count(*) n FROM post WHERE handle = ? AND at <= ?", b.handle, Date.now()).n;
+      x.posts = see ? this.postsFor(b.viewer, "AND t.handle = ? ORDER BY t.at DESC LIMIT 30", b.handle) : [];
       const mine = this.one("SELECT state FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
       x.follow_state = mine ? mine.state : null;           // on | asked | null
       x.you_follow = !!mine && mine.state === "on";
@@ -435,8 +470,21 @@ export class Directory {
         `ON p.handle = w.${o2} LEFT JOIN photo f ON f.handle = p.handle WHERE w.${c2} = ? AND w.state = ? ` +
         `ORDER BY w.at DESC LIMIT 200`, b.handle, state));
     }
-    if (p === "/feed") return json(this.postsFor(b.viewer, "JOIN follow w ON w.followee = t.handle AND " +
-      "w.follower = ? AND w.state = 'on' ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/feed") return json(this.postsFor(b.viewer, "AND t.handle IN (SELECT followee FROM follow " +
+      "WHERE follower = ? AND state = 'on') ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/scheduled") return json(this.all("SELECT id, text, at, media, poll, quote FROM post WHERE " +
+      "handle = ? AND at > ? ORDER BY at", b.handle, now));
+    if (p === "/vote") {              // once, final, before the poll ends; never in your own poll
+      const t = this.one("SELECT handle, poll, at FROM post WHERE id = ?", b.post);
+      let o = null;
+      try { o = t && t.poll ? JSON.parse(t.poll) : null; } catch {}
+      if (!o || t.at > now || !this.canSee(b.viewer, t.handle)) return json({error: "No such poll."});
+      if (t.handle === b.viewer) return json({error: "You can't vote in your own poll."});
+      if (now >= o.ends) return json({error: "This poll has ended."});
+      if (!Number.isInteger(b.choice) || b.choice < 0 || b.choice >= o.o.length) return json({error: "Pick a choice."});
+      this.sql.exec("INSERT OR IGNORE INTO vote VALUES (?, ?, ?, ?)", b.post, b.viewer, b.choice, now);
+      return json({ok: true, poll: this.pollOf(b.viewer, {id: b.post, poll: t.poll})});
+    }
     if (p === "/follow") {
       if (b.on) {
         const t = this.one("SELECT private FROM person WHERE handle = ?", b.handle);
@@ -531,9 +579,20 @@ export class Directory {
     if (p === "/post-add") {
       if (this.one("SELECT count(*) n FROM post WHERE handle = ? AND at > ?", b.handle, now - 86400e3).n >= POSTS_PER_DAY)
         return json({error: `At most ${POSTS_PER_DAY} posts a day.`});
-      this.sql.exec("INSERT INTO post (id, handle, text, at, media) VALUES (?, ?, ?, ?, ?)", b.id, b.handle,
-        b.text, now, JSON.stringify(b.media || []));
-      return json({ok: true});
+      const at = b.at || now;
+      if (at > now && this.one("SELECT count(*) n FROM post WHERE handle = ? AND at > ?", b.handle, now).n >= MAX_SCHEDULED)
+        return json({error: `At most ${MAX_SCHEDULED} scheduled posts.`});
+      let quote = "";
+      if (b.quote) {                  // only a post its author may see, out now
+        const q = this.one("SELECT handle, text FROM post WHERE id = ? AND at <= ?", b.quote, now);
+        if (!q || !this.canSee(b.handle, q.handle)) return json({error: "That post can't be quoted."});
+        quote = b.quote;
+        if (at <= now) this.notify(q.handle, "quote", b.handle, b.id, b.text.slice(0, 80));
+      }
+      const poll = b.poll ? JSON.stringify({o: b.poll.options, ends: at + b.poll.hours * 3600e3}) : "";
+      this.sql.exec("INSERT INTO post (id, handle, text, at, media, poll, quote) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        b.id, b.handle, b.text, at, JSON.stringify(b.media || []), poll, quote);
+      return json({ok: true, id: b.id});
     }
     if (p === "/post-del") {          // answers with the post's media, for the worker to erase
       const x = this.one("SELECT media FROM post WHERE id = ? AND handle = ?", b.id, b.handle);
@@ -1149,7 +1208,7 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
   const [sessions, log, profiles, unread] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
     call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]}),
     call(dir(env), "/notif-count", {handle: person.handle})]);
-  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup,
+  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup, gifs: !!env.GIPHY_KEY,
     unread: unread.n});
 }
 
@@ -1343,10 +1402,12 @@ async function canvasRoute(req, env, url) {
   const mediaOut = x => {
     let m = [];
     try { m = JSON.parse(x.media || "[]"); } catch {}
-    return m.map(y => ({type: y.k === "v" ? "video" : "image", url: `/home/media/${x.handle}/${y.id}`, w: y.w, h: y.h}));
+    return m.map(y => ({type: y.k === "v" ? "video" : y.k === "g" ? "gif" : "image", url: `/home/media/${x.handle}/${y.id}`, w: y.w, h: y.h}));
   };
+  const quoteOut = q => !q ? null : q.gone ? {gone: true} : {id: q.id, text: q.text, at: q.at,
+    media: mediaOut(q).slice(0, 1), ...card(q)};
   const postOut = x => ({id: x.id, text: x.text, at: x.at, likes: x.likes, liked: x.liked,
-    replies: x.replies, media: mediaOut(x), ...card(x)});
+    replies: x.replies, media: mediaOut(x), poll: x.poll || null, quote: quoteOut(x.quote), ...card(x)});
   if (p === "/home/suggest" && req.method === "GET") {
     if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "suggest", most: SUGGESTS_PER_HOUR})).ok)
       return json({error: "Too many searches: try again in an hour."}, 429);
@@ -1395,6 +1456,24 @@ async function canvasRoute(req, env, url) {
       ref: x.ref, text: x.text || "", at: x.at, read: !!x.read, ...card({...x, handle: x.actor})})));
   if (p === "/home/notif-count" && req.method === "GET")
     return json(await call(dir(env), "/notif-count", {handle: person.handle}));
+  if (p === "/home/gifs" && req.method === "GET") {   // GIPHY search, through here: the key stays on the server
+    if (!env.GIPHY_KEY) return json({error: "GIFs aren't set up yet."}, 404);
+    if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "gifs", most: GIFS_PER_HOUR})).ok)
+      return json({error: "Too many searches: try again in an hour."}, 429);
+    const q = clean(url.searchParams.get("q"), 50).trim();
+    const u = q ? `https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(q)}&` : "https://api.giphy.com/v1/gifs/trending?";
+    const got = await fetch(`${u}api_key=${env.GIPHY_KEY}&limit=24&rating=pg-13`).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!got) return json({error: "GIF search isn't answering: try again."}, 502);
+    return json((got.data || []).map(g => {
+      const im = g.images && (g.images.fixed_width_small || g.images.fixed_width) || {};
+      return {id: g.id, title: g.title || "", url: im.url || "", w: +im.width || 0, h: +im.height || 0};
+    }).filter(g => /^https:\/\/media[0-9]*\.giphy\.com\//.test(g.url)));
+  }
+  if (p === "/home/scheduled" && req.method === "GET") {
+    const xs = await call(dir(env), "/scheduled", {handle: person.handle});
+    return json(xs.map(x => ({id: x.id, text: x.text, at: x.at, poll: !!x.poll, quote: !!x.quote,
+      media: mediaOut({...x, handle: person.handle})})));
+  }
   if (p.startsWith("/home/media/") && req.method === "GET") {   // only to whoever may see the post
     const [h, id] = p.slice(12).split("/");
     if (!/^[a-z0-9-]{1,30}$/.test(h || "") || !MEDIA_ID.test(id || "")) return text("No such file.", 404);
@@ -1467,12 +1546,53 @@ async function canvasRoute(req, env, url) {
       const m = o.customMetadata || {};
       media.push({k: m.k, id, w: +m.w || 0, h: +m.h || 0});
     }
-    const vids = media.filter(x => x.k === "v").length;
+    const vids = media.filter(x => x.k !== "i").length;
     if (media.length > 4 || (vids && media.length > 1))
-      return json({error: "A post carries up to 4 photos, or 1 video."}, 400);
-    if (!t && !media.length) return json({error: "Write something first."}, 400);
-    const got = await call(dir(env), "/post-add", {id: secret(12), handle: person.handle, text: t, media});
-    return got.error ? json(got, 429) : json({ok: true});
+      return json({error: "A post carries up to 4 photos, or 1 video or GIF."}, 400);
+    let poll = null;
+    if (f.poll) {
+      const options = (Array.isArray(f.poll.options) ? f.poll.options : []).map(x => clean(x, MAX_CHOICE + 1).trim())
+        .filter(Boolean);
+      if (options.length < 2 || options.length > 4) return json({error: "A poll has 2 to 4 choices."}, 400);
+      if (options.some(x => x.length > MAX_CHOICE)) return json({error: `A choice is at most ${MAX_CHOICE} characters.`}, 400);
+      if (!POLL_HOURS.includes(f.poll.hours)) return json({error: "Pick how long the poll stays open."}, 400);
+      if (media.length) return json({error: "A post has a poll or photos, not both."}, 400);
+      if (!t) return json({error: "Ask your question first."}, 400);
+      poll = {options, hours: f.poll.hours};
+    }
+    let at = 0;
+    if (f.at) {
+      at = Math.round(+f.at);
+      if (!(at > Date.now() + 30e3) || at > Date.now() + SCHEDULE_MAX_MS)
+        return json({error: "Schedule it for a time from a minute to 30 days ahead."}, 400);
+    }
+    if (!t && !media.length && !f.quote) return json({error: "Write something first."}, 400);
+    const got = await call(dir(env), "/post-add", {id: secret(12), handle: person.handle, text: t, media,
+      poll, at, quote: f.quote ? String(f.quote).slice(0, 40) : ""});
+    return got.error ? json(got, 429) : json({ok: true, id: got.id, scheduled: !!at});
+  }
+  if (p === "/home/vote") {
+    const got = await call(dir(env), "/vote", {viewer: person.handle, post: String(f.post || ""), choice: f.choice});
+    return got.error ? json(got, 400) : json({ok: true, poll: got.poll});
+  }
+  if (p === "/home/gif") {            // a GIF picked in search: kept in R2 as its looping MP4
+    if (!env.GIPHY_KEY) return json({error: "GIFs aren't set up yet."}, 404);
+    const gid = String(f.id || "");
+    if (!/^[A-Za-z0-9]{6,40}$/.test(gid)) return json({error: "Pick a GIF."}, 400);
+    if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "media", most: UPLOADS_PER_HOUR})).ok)
+      return json({error: "Too many uploads: try again in an hour."}, 429);
+    const meta = await fetch(`https://api.giphy.com/v1/gifs/${gid}?api_key=${env.GIPHY_KEY}`).then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+    const v = meta && meta.data && meta.data.images && (meta.data.images.original_mp4 || meta.data.images.original);
+    const src = v && (v.mp4 || "");
+    if (!src || !/^https:\/\/media[0-9]*\.giphy\.com\//.test(src)) return json({error: "That GIF can't be used."}, 400);
+    const r = await fetch(src);
+    const size = +r.headers.get("content-length") || 0;
+    if (!r.ok || !size || size > GIF_MAX) return json({error: "That GIF is too big."}, 400);
+    const id = secret(16);
+    await env.MEDIA.put(`m/${person.handle}/${id}`, r.body.pipeThrough(new FixedLengthStream(size)), {
+      httpMetadata: {contentType: "video/mp4"}, customMetadata: {k: "g", w: String(+v.width || 0), h: String(+v.height || 0)}});
+    return json({id, type: "gif"});
   }
   if (p === "/home/post-delete") {
     const got = await call(dir(env), "/post-del", {id: String(f.id || ""), handle: person.handle});
