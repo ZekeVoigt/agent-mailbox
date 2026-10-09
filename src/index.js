@@ -75,6 +75,25 @@ const call = async (stub, path, body) => (await stub.fetch("https://do" + path, 
 const pad = n => String(n).padStart(15, "0");
 // a path as it may be logged: never an agent's, owner's or mailbox's secret
 const redact = p => p.replace(/^\/(a|o|m)\/[^/]+/, "/$1/<secret>");
+// the kind of client that opened a link, from its user agent; a chatbot fetched from its maker's
+// servers is held to that network too, while a laptop's (Claude Code, a browser) moves between
+// networks and is held to its kind alone
+function clientOf(req) {
+  const ua = req.headers.get("user-agent") || "";
+  const family = /meta-external|facebookexternalhit|FacebookBot|meta-webindexer/i.test(ua) ? "Meta" :
+    /Claude-User|Claude-Web|ClaudeBot|anthropic/i.test(ua) ? "Claude" :
+    /ChatGPT|OpenAI|GPTBot|OAI-/i.test(ua) ? "ChatGPT" :
+    /Google|Gemini/i.test(ua) ? "Google" :
+    /Perplexity/i.test(ua) ? "Perplexity" :
+    /^curl\//i.test(ua) ? "curl" :
+    /python|aiohttp|httpx|requests|node|undici|axios|Go-http|okhttp|Deno|Bun/i.test(ua) ? "a script" :
+    /Mozilla/i.test(ua) ? "a web browser" : "an unknown app";
+  return {family, org: String(req.cf?.asOrganization || ""), asn: Number(req.cf?.asn || 0)};
+}
+const SERVER_FAMILIES = ["Meta", "ChatGPT", "Google", "Perplexity"];
+const sameClient = (a, b) => a.family === b.family && (!SERVER_FAMILIES.includes(a.family) || a.org === b.org);
+const clientName = c => c.family + (c.org ? ` (${c.org})` : "");
+
 const who = req => ({ip: req.headers.get("cf-connecting-ip") || "",
   ua: clean(req.headers.get("user-agent"), 160)});
 
@@ -502,7 +521,57 @@ export class Directory {
 // (msgs:<agentId>, a whole conversation in one value, is the old shape: moved on first touch)
 
 export class Agent {
-  constructor(state, env) { this.s = state.storage; this.env = env; this.waiters = []; this.moved = new Set(); }
+  constructor(state, env) { this.state = state; this.s = state.storage; this.env = env; this.waiters = []; this.moved = new Set(); }
+
+  // -- the link's life: issued at Add or Replace; dead if not opened within LINK_TTL; the first
+  // client to open it is pinned, and another is reported to the human (refused when LOCK_MODE is
+  // "enforce")
+  ttl() { return Number(this.env.LINK_UNUSED_TTL_S || 86400) * 1000; }
+  async issue(now) {
+    await this.s.put({issued: now, expired: false, opened: 0, pins: [], uses: []});
+    await this.s.setAlarm(now + this.ttl());
+  }
+  async expire(me) {
+    if (await this.s.get("expired")) return;
+    await this.s.put("expired", true);
+    try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "link_expired", actor: "",
+      ref: me.id, text: me.name}); } catch {}
+  }
+  async alarm() {
+    const me = await this.me();
+    console.log(JSON.stringify({at: "link-alarm", agent: me ? me.id : null}));
+    if (!me) return;
+    const [issued, opened] = [await this.s.get("issued"), await this.s.get("opened")];
+    if (issued && !opened && Date.now() - issued >= this.ttl() - 1000) await this.expire(me);
+  }
+  async gate(me, c, now) {             // null when the link may be used, else the refusal's words
+    let issued = await this.s.get("issued");
+    if (!issued) {                     // a link from before links had a life: it lives from now
+      issued = now;
+      const seen = await this.s.get("seen");
+      await this.s.put({issued, opened: seen || 0, pins: [], uses: []});
+    }
+    const opened = await this.s.get("opened");
+    if ((await this.s.get("expired")) || (!opened && now - issued > this.ttl())) {
+      await this.expire(me);
+      return [410, "This link expired: it was not opened within a day of being made. Its human " +
+        "can make a new one on their dashboard."];
+    }
+    if (!opened) await this.s.put("opened", now);
+    const pins = (await this.s.get("pins")) || [], uses = (await this.s.get("uses")) || [];
+    const ok = !pins.length || pins.some(x => sameClient(x, c));
+    if (!pins.length) await this.s.put("pins", [{...c, at: now}]);
+    const last = uses.at(-1);
+    if (last && sameClient(last, c) && last.ok === ok) last.at = now;
+    else uses.push({...c, at: now, ok});
+    await this.s.put("uses", uses.slice(-20));
+    if (ok) return null;
+    try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "link_client", actor: "",
+      ref: `${me.id}|${c.family}|${c.org}`, text: `${me.name}|${clientName(c)}|${clientName(pins[0])}`}); } catch {}
+    if (this.env.LOCK_MODE !== "enforce") return null;
+    return [403, `This link is locked to the app that first used it (${clientName(pins[0])}). Its human ` +
+      "was told, and can allow this one or replace the link."];
+  }
 
   async me() { return this.s.get("me"); }
   async peers() {
@@ -541,7 +610,7 @@ export class Agent {
     const url = new URL(req.url), p = url.pathname;
     const b = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const now = Date.now();
-    if (p === "/init") { await this.s.put("me", b); return json({ok: true}); }
+    if (p === "/init") { await this.s.put("me", b); await this.issue(now); return json({ok: true}); }
     const me = await this.me();
     if (p === "/wipe") {              // the agent removed: its peers are cut, its storage erased
       if (me) for (const x of await this.peers())
@@ -555,7 +624,22 @@ export class Agent {
       if (!me) return json({me: null, peers: []});
       const peers = await this.peers();
       for (const x of peers) if (x.state === "connected") x.last = (await this.msgs(x.id, 1))[0] || null;
-      return json({me, seen: await this.s.get("seen"), peers});
+      const issued = await this.s.get("issued"), opened = await this.s.get("opened");
+      const expired = !!(await this.s.get("expired")) || (!!issued && !opened && now - issued > this.ttl());
+      return json({me, seen: await this.s.get("seen"), peers, issued, opened, expired,
+        pins: (await this.s.get("pins")) || [], uses: (await this.s.get("uses")) || []});
+    }
+    if (p === "/issue") { await this.issue(now); return json({ok: true}); }
+    if (p === "/owner-allow") {        // the human lets another app use this link
+      const pins = (await this.s.get("pins")) || [], c = {family: String(b.family), org: String(b.org || "")};
+      if (!pins.some(x => sameClient(x, c))) pins.push({...c, at: now});
+      await this.s.put("pins", pins);
+      return json({ok: true});
+    }
+    if (p === "/test-age") {           // the operator's, for tests: the link as if made a day ago
+      await this.s.put("issued", now - this.ttl() - 1000);
+      await this.alarm();
+      return json({ok: true});
     }
     if (!me) {                        // removed, or never set up: nothing is stored or answered
       if (p.startsWith("/in/") || p.startsWith("/owner-")) return json({error: "gone"}, 410);
@@ -611,6 +695,10 @@ export class Agent {
     }
 
     // -- the agent's own page and links (url carries ?link for building links back) ---------
+    if (b.via === "link") {
+      const no = await this.gate(me, b.client || {family: "an unknown app", org: ""}, now);
+      if (no) return text(no[1], no[0]);
+    }
     const base = b.base;               // https://<host>/a/<secret>
     if (p === "/page") return text(await this.page(me, base, b.wait));
     if (p === "/find") {
@@ -852,7 +940,8 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
       await call(stub, "/init", {id: a.id, handle: person.handle, name: a.name, person: person.name});
       st = await call(stub, "/status");
     }
-    agents.push({id: a.id, name: a.name, seen: st.seen, peers: st.peers});
+    agents.push({id: a.id, name: a.name, seen: st.seen, peers: st.peers, opened: st.opened,
+      expired: st.expired, pins: st.pins || [], uses: st.uses || []});
   }
   const handles = new Set([person.handle]);
   for (const a of agents) for (const x of a.peers) handles.add(x.handle);
@@ -962,6 +1051,7 @@ async function postHome(req, env, url) {
   if (f.do === "rotate") {
     const link = secret();
     await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: await digest(link)});
+    await call(stub, "/issue");
     await log(`Replaced ${a.name}'s link`);
     return home(env, person, ses, "", "add", handOver(url.origin, person.handle, [{id: a.id, name: a.name, link}], true));
   }
@@ -1040,7 +1130,7 @@ async function canvasRoute(req, env, url) {
   if (p === "/home/agent-seen" && req.method === "GET") {   // Add's step 3, polled
     const a = person.agents.find(x => x.id === url.searchParams.get("id"));
     if (!a) return json({error: "No such agent."}, 404);
-    return json({seen: (await call(agentObj(env, a.id), "/status")).seen || null});
+    return json({seen: (await call(agentObj(env, a.id), "/status")).opened || null});
   }
   if (p === "/home/feed" && req.method === "GET")
     return json((await call(dir(env), "/feed", {viewer: person.handle})).map(postOut));
@@ -1125,6 +1215,13 @@ async function canvasRoute(req, env, url) {
     await call(dir(env), "/reply-del", {viewer: person.handle, id: String(f.id || "")});
     return json({ok: true});
   }
+  if (p === "/home/link-allow") {
+    const a = person.agents.find(x => x.id === f.agent);
+    if (!a) return json({error: "No such agent."}, 404);
+    await call(agentObj(env, a.id), "/owner-allow", {family: f.family, org: f.org});
+    await audit(env, req, ses.clerk, `Let ${clean(f.family, 40)} use ${a.name}'s link`);
+    return json({ok: true});
+  }
   if (p === "/home/notifs-read") {
     await call(dir(env), "/notifs-read", {handle: person.handle});
     return json({ok: true});
@@ -1180,7 +1277,7 @@ async function route(req, env) {
     const base = `${url.origin}/a/${parts[1]}`, verb = parts[2] || "page";
     if (!["page", "find", "reach", "accept", "decline", "say", "cut"].includes(verb))
       return text("Unknown address. Open your page: " + base, 404);
-    let body = {...q, base};
+    let body = {...q, base, via: "link", client: clientOf(req)};
     if (req.method === "POST" && verb === "say" && !q.text) body.text = await req.text();
     return agentObj(env, ag.id).fetch("https://do/" + verb, {method: "POST", body: JSON.stringify(body)});
   }
@@ -1208,6 +1305,11 @@ async function route(req, env) {
             `${x.handle}/${x.name}:${x.state}`)});
       }
       return json(out);
+    }
+    if (parts[1] === "age-link" && HANDLE_RE.test(b.handle || "")) {
+      const a = (await call(dir(env), "/agents-of", {handle: b.handle})).find(x => x.id === b.id);
+      if (!a) return text("No such agent.", 404);
+      return json(await call(agentObj(env, a.id), "/test-age"));
     }
     if (parts[1] === "remove-agent" && HANDLE_RE.test(b.handle || "")) {
       await call(dir(env), "/remove-agent", {id: b.id, handle: b.handle});

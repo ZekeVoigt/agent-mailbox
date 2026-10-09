@@ -10,6 +10,9 @@
   // Workers Logs keep only what the code logs (errors, redacted paths, admin ops): no invocation
   // logs, since a request's URL can carry an agent's secret link and its message text
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } },
+  // an agent link's first app is pinned: "watch" reports another app to the human, "enforce" also
+  // refuses it. Production watches until the real assistants' patterns are known (SECURITY.md)
+  "vars": { "LOCK_MODE": "watch", "LINK_UNUSED_TTL_S": "86400" },
   "durable_objects": { "bindings": [
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
@@ -22,6 +25,7 @@
     // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
     "staging": {
       "name": "agent-mailbox-staging",
+      "vars": { "LOCK_MODE": "enforce", "LINK_UNUSED_TTL_S": "86400" },
       "workers_dev": true,
       "routes": [],
       "durable_objects": { "bindings": [

@@ -158,6 +158,9 @@ ol.steps .paste .go{width:100%;margin:10px 0 0;padding:12px;font-size:14px}
 ol.steps .mem{max-height:180px;overflow-y:auto}
 button.fin{width:auto}
 .lock{display:inline-flex;margin-left:6px;vertical-align:-1px;color:var(--dim)}
+.row small.bad,.row b.bad{color:#fca5a5;font-weight:400}
+.row .org{color:var(--dim)}
+.notifs .n .face.sys{color:#0a0a0a;background:var(--warn)}
 .lock svg{width:13px;height:13px}
 .ncard .private{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 0;text-align:center}
 .ncard .private .lock svg{width:26px;height:26px}
@@ -203,7 +206,7 @@ background:var(--warn);border-radius:999px}
 .notifs .n .acts .ghost{color:var(--ink);background:#262626}
 @media (max-width:760px){
 .nav a[data-unread]:not([data-unread="0"]):after{left:calc(50% + 4px);top:2px}
-.notifs .n{flex-wrap:wrap}.notifs .n .acts{margin-left:52px}
+.notifs .n{flex-wrap:wrap}.notifs .n .tx{flex:1 1 calc(100% - 60px)}.notifs .n .acts{margin-left:52px}
 }
 
 /* -- phones: the app is the whole screen, tabs at the bottom, panels full screen ------------- */
@@ -544,12 +547,19 @@ to connect with your ${esc(shownName(a.name))}, about “${esc(x.why)}”<br><sm
 
   const ags = agents.map(a => {
     const fresh = a.seen && now - a.seen < 5 * 60e3;
-    const st = !a.seen ? `<span class="dot wait"></span>waiting for its first check` :
+    const st = a.expired ? `<span class="dot"></span>link expired` :
+      !a.seen ? `<span class="dot wait"></span>waiting for its first check` :
       fresh ? `<span class="dot live"></span>connected` : `<span class="dot"></span>last checked ${ago(now - a.seen)}`;
+    // where this link lives: the app it is locked to, and the last app that opened it
+    const cn = c => esc(c.family) + (c.org ? ` <span class="org">(${esc(c.org)})</span>` : "");
+    const pin = (a.pins || [])[0], last = (a.uses || []).at(-1);
+    const life = a.expired ? `<br><small class="bad">Link expired: never opened within a day.</small>` :
+      !a.opened ? `<br><small>Not set up yet. The link expires a day after it was made if unused.</small>` :
+      `<br><small>Locked to ${(a.pins || []).map(cn).join(", ")}${last ? ` · last opened by ${cn(last)} ${
+        ago(now - last.at)}${last.ok ? "" : ' <b class="bad">(not the locked app)</b>'}` : ""}</small>`;
     return `<div class="row">${logo(a.name)}<span class="why">${esc(shownName(a.name))} <small>@${
-      esc(person.handle)}/${esc(a.name)}</small>${a.seen ? `<br><small>checked ${ago(now - a.seen)}</small>` :
-      `<br><small>Not set up yet.</small>`}</span>${a.seen ? "" :
-      act({do: "rotate", agent: a.id}, "Finish setup")}
+      esc(person.handle)}/${esc(a.name)}</small>${life}</span>${a.opened && !a.expired ? "" :
+      act({do: "rotate", agent: a.id}, a.expired ? "Get a new link" : "Finish setup")}
 <span class="st">${st}</span></div><details class="rm"><summary>Its link</summary><p>Replacing it
 stops the old one at once; then paste the new one into ${esc(shownName(a.name))}'s memory.</p>${
   act({do: "rotate", agent: a.id}, "Replace " + shownName(a.name) + "'s link", true)}</details>
@@ -980,6 +990,25 @@ const NOTIFS = `
     });
     if (x.kind === "connect") acts.appendChild(h("a", {href: "#requests", class: "ghost", text: "Open Requests",
       onclick: function(e){ e.preventDefault(); go("requests"); }}));
+    if (x.kind === "link_client" || x.kind === "link_expired") {
+      var bits = (x.text || "").split("|"), ref = (x.ref || "").split("|");
+      var agentName = (bits[0] || "agent").replace(/^muse/, "Muse").replace(/^claude-code/, "Claude Code").replace(/-(\\d+)$/, " $1");
+      if (x.kind === "link_client") {
+        words = [h("b", {text: "Your " + agentName + "’s link was opened by " + (bits[1] || "another app")}),
+          ". It is locked to " + (bits[2] || "the first app that used it") + ". If that wasn’t you, replace the link."];
+        acts.appendChild(h("button", {type: "button", text: "Allow it", onclick: function(e){
+          e.target.disabled = true;
+          send("/home/link-allow", {agent: ref[0], family: ref[1], org: ref[2] || ""}).then(function(){ e.target.textContent = "Allowed"; }); }}));
+        acts.appendChild(h("a", {href: "#agents", class: "ghost", text: "Replace link",
+          onclick: function(ev){ ev.preventDefault(); go("agents"); }}));
+      } else {
+        words = [h("b", {text: "Your " + agentName + "’s link expired"}), ": it was never opened within a day of being made."];
+        acts.appendChild(h("a", {href: "#agents", class: "ghost", text: "Get a new link",
+          onclick: function(ev){ ev.preventDefault(); go("agents"); }}));
+      }
+      return h("div", {class: "n" + (x.read ? "" : " new")}, [h("i", {class: "face sys", text: "!"}),
+        h("span", {class: "tx"}, words.concat([h("small", {text: ago(x.at)})])), acts]);
+    }
     var f = face(x); f.addEventListener("click", function(){ board(x.handle); });
     return h("div", {class: "n" + (x.read ? "" : " new")}, [f, h("span", {class: "tx"}, words.concat([h("small", {text: ago(x.at)})])),
       acts.childNodes.length ? acts : null]);

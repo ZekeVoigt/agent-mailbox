@@ -93,6 +93,15 @@ def person(name, handle, agents):
     return dict(zip(names, links)), op, u["id"]
 
 
+def get_as(url, ua):
+    """Open a link as another app would (its own user agent): (status, body)."""
+    try:
+        with R.urlopen(R.Request(loc(url), headers={"User-Agent": ua}), timeout=40) as r:
+            return r.status, r.read().decode()
+    except R.HTTPError as e:
+        return e.code, e.read().decode()
+
+
 def check(cond, what):
     print(("PASS " if cond else "FAIL ") + what, flush=True)
     if not cond:
@@ -125,6 +134,18 @@ def main():
     check(seen() is None, "Add's step 3 waits: the agent has not opened its link yet")
     p = get(zm)
     check(seen(), "and flips the moment the agent opens its link")
+    # the link is locked to the app that first opened it (here, this script's browser user agent)
+    enforce = "staging" in B
+    code, body = get_as(zm, "curl/8.7.1")
+    check(code == 403 and "locked" in body if enforce else code == 200,
+          "another app opening the link is " + ("refused" if enforce else "let through (watch mode)"))
+    alert = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "link_client"]
+    check(alert and "curl" in alert[0]["text"], "and the human is told in Activity")
+    ref = alert[0]["ref"].split("|")
+    jpost(B + "/home/link-allow", {"agent": ref[0], "family": ref[1], "org": ref[2]}, zo)
+    check(get_as(zm, "curl/8.7.1")[0] == 200, "Allow it: that app may use the link now")
+    agents = re.findall(r"Locked to ([^<]+)", get(B + "/home", zo))
+    check(agents and "a web browser" in agents[0], "Agents shows the app each link is locked to")
     check(f"@zeke{run}/claude-code" in p and "your own agent" in p, "own agents auto-connected")
     get(zc + "/say?" + U.urlencode({"to": f"@zeke{run}/muse", "text": "hi from claude"}))
     check("hi from claude" in get(zm), "own agents message without a request")
@@ -171,6 +192,20 @@ def main():
           "the Connections canvas shows Dad, and never your own agents as people")
     # an agent can accept too (after asking its human), and a decline is quiet
     s2, s2o, _ = person("Stranger Two", f"str{run}", ["muse"])
+    # a link never opened expires after a day (aged by the operator here), and the human is told
+    if os.environ.get("ADMIN"):
+        page = post(B + "/home", {"do": "add", "agent": ["muse"]}, zo)
+        newlink = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)[0]
+        waits[newlink] = re.findall(r'data-wait="([^"]+)"', page)[0]
+        R.urlopen(R.Request(B + "/admin/age-link", json.dumps({"handle": f"zeke{run}", "id": waits[newlink]}).encode(),
+                            headers={**UA, "x-admin": os.environ["ADMIN"]}), timeout=20).read()
+        check([n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "link_expired"],
+              "an unused link expires after a day, and Activity says so")
+        check(get_as(newlink, UA["User-Agent"])[0] == 410, "an expired link no longer works")
+        home = get(B + "/home", zo)
+        check("Get a new link" in home, "Agents offers a new link for it")
+        fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
+        check(get_as(fresh, UA["User-Agent"])[0] == 200, "the new link works")
     # the canvas: a profile with a photo, found by name, and asked to connect from the page
     import base64
     jpg = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 4
@@ -201,7 +236,7 @@ def main():
     check(jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o).get("ok"), "the stranger follows Zeke")
     bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
     check(bz["followers"] == 1 and bz["you_follow"] and bz["status"] == "shipping the board"
-          and bz["posts"][0]["text"] == "first post" and set(bz["agents"]) == {"muse", "claude-code"}
+          and bz["posts"][0]["text"] == "first post" and {"muse", "claude-code"} <= set(bz["agents"])
           and bz["link"] == "asked", "Zeke's board: status, post, agents, 1 follower, the request waiting")
     feed = json.loads(get(B + "/home/feed", s2o))
     check(feed and feed[0]["text"] == "first post" and feed[0]["handle"] == f"zeke{run}", "it is in the follower's feed")
