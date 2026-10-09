@@ -77,8 +77,8 @@ button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#73
 .row.req{flex-wrap:wrap}
 .row .acts{display:flex;gap:6px;flex:none;margin-left:auto}
 .row .acts form button{opacity:1;padding:7px 16px;font-size:13px;color:var(--ink);background:#262626}
-.row .acts form:first-child button{color:#000;background:#fafafa}
-.row .acts form:first-child button:hover{background:#e5e5e5;color:#000}
+.row .acts form:first-child button{color:var(--ink);background:#333}
+.row .acts form:first-child button:hover{background:#3d3d3d;color:var(--ink)}
 .main{min-width:0;max-width:100%}
 section#connections:not([hidden]){display:flex;flex-direction:column;height:100%}
 #connections .graph{flex:1;min-height:440px}
@@ -151,7 +151,7 @@ ol.steps>li{position:relative;counter-increment:st;margin:0;padding:0 0 22px 44p
 ol.steps>li:before{content:counter(st);position:absolute;left:0;top:0;display:flex;align-items:center;
 justify-content:center;width:28px;height:28px;font-size:13px;font-weight:600;color:var(--dim);background:#1f1f1f;border-radius:50%}
 ol.steps>li:not(:last-child):after{content:"";position:absolute;left:13.5px;top:34px;bottom:6px;width:1px;background:#262626}
-ol.steps>li.now:before{color:#0a0a0a;background:#fafafa}
+ol.steps>li.now:before{color:var(--ink);background:#3a3a3a}
 ol.steps>li.done:before{content:"✓";color:#0a0a0a;background:#4ade80}
 ol.steps>li.wait.ok:before{content:"✓";color:#0a0a0a;background:#4ade80}
 ol.steps h2{display:flex;align-items:center;gap:8px;margin:3px 0 6px;font-size:15px;font-weight:500}
@@ -163,7 +163,7 @@ ol.steps li.ok .dot{background:#4ade80}
 .pick label,.choice label{position:relative;display:flex;align-items:center;gap:12px;margin:0;padding:14px 16px;
 font-size:14.5px;font-weight:500;color:var(--ink);background:#1f1f1f;border-radius:12px;cursor:pointer}
 .pick label:hover,.choice label:hover{background:#2a2a2a}
-.pick label:has(input:checked),.choice label:has(input:checked){box-shadow:inset 0 0 0 2px #fafafa;background:#262626}
+.pick label:has(input:checked),.choice label:has(input:checked){background:#363636}
 .pick input,.choice input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
 .pick label:has(input:focus-visible),.choice label:has(input:focus-visible){outline:2px solid #fafafa;outline-offset:2px}
 .pick .mk{width:26px;height:26px;flex:none}
@@ -312,7 +312,7 @@ font-style:normal;color:#fff;background:rgba(0,0,0,.55);border-radius:50%;opacit
 .pabout .agents{margin:12px 0 0}
 .plinks{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
 .plink{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:6px 13px 6px 10px;font-size:13.5px;
-color:var(--ink);text-decoration:none;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:999px}
+color:var(--ink);text-decoration:none;background:#1f1f1f;border-radius:999px}
 .plink:hover{background:#262626}
 .plink span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plink .li{display:flex;flex:none}
@@ -325,14 +325,14 @@ color:var(--ink);text-decoration:none;background:#1c1c1c;border:1px solid #2a2a2
 .pedit fieldset small{font-size:12px;color:var(--dim)}
 .pedit .row2{display:flex;align-items:center;gap:8px}
 .pedit .row2 button{width:auto;margin:0;padding:8px 20px}
-.pedit .row2 button:first-child{color:#000;background:#fafafa}
+.pedit .row2 button:first-child{color:var(--ink);background:#333}
 .pedit .note{font-size:12.5px;color:#fca5a5}
 .pp button.reqs{margin:0 0 18px}
 .pcompose{display:flex;align-items:flex-start;gap:12px;margin:0 0 22px;padding:14px;background:#141414;border-radius:14px}
 .pcompose .face{width:40px;height:40px;font-size:15px}
 .pcompose .face img{width:100%;height:100%;object-fit:cover}
 .pcompose textarea{flex:1 1 0;width:0;min-width:0;min-height:56px;margin:0;resize:vertical}
-.pcompose button{width:auto;margin:0;padding:9px 18px;color:#000;background:#fafafa}
+.pcompose button{width:auto;margin:0;padding:9px 18px;color:var(--ink);background:#333}
 .pcompose .note{flex-basis:100%;font-size:12.5px;color:#fca5a5}
 .pcompose .note:empty{display:none}
 .pcompose:has(.note:not(:empty)){flex-wrap:wrap}
@@ -388,10 +388,18 @@ column-gap:20px;margin:0 0 20px}
 .pcard{width:100%;max-height:88dvh;border-radius:16px 16px 0 0;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
 }
 
-#activity .reqs-to{margin:0 0 22px;padding:16px 18px 6px;background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.18);border-radius:14px}
+#activity .reqs-to{margin:0 0 22px;padding:16px 18px 6px;background:rgba(251,191,36,.06);border-radius:14px}
 #activity .reqs-to h2{margin:0 0 4px;font-size:15px}
 #activity .reqs-to h2 .n{padding:1px 8px;font-size:11.5px;font-weight:600;color:#0a0a0a;background:var(--warn);border-radius:999px}
 #activity h2.earlier{margin:0 0 6px;font-size:15px}
+
+/* -- no outlines around components, no white buttons: the page stays in its own grays -------- */
+.paste{border:0;background:#141414}
+button.go{color:var(--ink);background:#333}
+button.go:hover{background:#3d3d3d}
+.tiles label:has(input:checked){color:var(--ink);background:#363636}
+a.google{color:var(--ink);background:#262626}
+a.google:hover{background:#2e2e2e}
 `;
 
 const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${cls}">${
@@ -400,10 +408,13 @@ const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${
 // -- signing in (Clerk), the first visit -------------------------------------------------------
 
 const APPEARANCE = `{variables: {colorBackground: "#141414", colorText: "#fafafa",
-  colorTextSecondary: "#a3a3a3", colorPrimary: "#fafafa", colorTextOnPrimaryBackground: "#000",
+  colorTextSecondary: "#a3a3a3", colorPrimary: "#333333", colorTextOnPrimaryBackground: "#fafafa",
   colorInputBackground: "#1f1f1f", colorInputText: "#fafafa", colorNeutral: "#fafafa",
   borderRadius: "10px"}, elements: {header: {display: "none"}, card: {boxShadow: "none", background: "transparent",
-  border: "none"}, cardBox: {boxShadow: "none", border: "none"}, footer: {background: "transparent"}}}`;
+  border: "none"}, cardBox: {boxShadow: "none", border: "none"}, footer: {background: "transparent"},
+  formFieldInput: {border: "none", boxShadow: "none"}, socialButtonsBlockButton: {border: "none", boxShadow: "none",
+  background: "#1f1f1f"}, formButtonPrimary: {border: "none", boxShadow: "none"}, otpCodeFieldInput: {border: "none",
+  boxShadow: "none", background: "#1f1f1f"}}}`;
 
 // Clerk runs in its own frame (/clerk-frame, same site): this page's stylesheet would otherwise
 // restyle Clerk's form. The frame says how tall it is, and moves the page on once signed in.
@@ -468,7 +479,7 @@ html,body{margin:0;background:transparent;color-scheme:dark}
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center}
 #c{width:100%;display:flex;justify-content:center}
 #s{margin:16px 0;text-align:center;color:#a3a3a3;font-size:14px}
-#s button{padding:9px 16px;border:0;border-radius:10px;background:#fafafa;color:#000;font:inherit;cursor:pointer}
+#s button{padding:9px 16px;border:0;border-radius:10px;background:#333;color:#fafafa;font:inherit;cursor:pointer}
 </style></head><body><div id="c"><p id="s" hidden></p></div>
 <script nonce="${nonce}">${BOOT}</script>
 <script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
