@@ -552,15 +552,19 @@ def main():
     # LINKS_MIGRATED, when the owner's migrate-links has copied every link)
     if TEST_SITE and os.environ.get("ADMIN"):
         sid = waits[sp["muse"]]
+        check(admin("check-refs", {}).get("missing") == 0, "check-refs (support key): every link has its ref")
         admin("drop-ref", {"handle": f"spm{run}", "id": sid})
+        check(admin("check-refs", {}).get("missing") == 1, "and counts a link that has none")
         if os.environ.get("E2E_LINKS_MIGRATED") == "1":
             check(get_as(m, UA["User-Agent"])[0] == 404, "LINKS_MIGRATED: a link with no ref is not looked up in the directory")
             check(admin("migrate-links", {}) == 403, "migrate-links needs the owner's key")
             check(admin("migrate-links", {}, os.environ["ADMIN_OWNER"]).get("migrated", 0) > 0
-                  and get_as(m, UA["User-Agent"])[0] == 200, "the owner's migrate-links gives it its ref again")
+                  and get_as(m, UA["User-Agent"])[0] == 200 and admin("check-refs", {}).get("missing") == 0,
+                  "the owner's migrate-links gives it its ref again")
         else:
-            check(get_as(m, UA["User-Agent"])[0] == 200 and get_as(m, UA["User-Agent"])[0] == 200,
-                  "a link from before refs still works, found once in the directory")
+            check(get_as(m, UA["User-Agent"])[0] == 200 and get_as(m, UA["User-Agent"])[0] == 200
+                  and admin("check-refs", {}).get("missing") == 0,
+                  "a link from before refs still works, found once in the directory and given its ref")
     # new accounts an IP a day (an e2e account, marked by Clerk's backend, is never counted)
     if TEST_SITE and os.environ.get("ADMIN"):
         admin("reset-signups", {})

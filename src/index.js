@@ -1959,6 +1959,12 @@ async function adminRoute(req, env, op) {
   if (op === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
   if (op === "age-person" && env.TEST_SITE === "1" && handle)
     return json(await call(dir(env), "/test-age-person", {handle}));
+  if (op === "check-refs") {          // read-only, counts only: may LINKS_MIGRATED be set yet?
+    const all = await call(dir(env), "/all-links", {});
+    let missing = 0;
+    for (const a of all) if (a.link && (await call(linkRef(env, a.link), "/get")) !== a.id) missing++;
+    return json({links: all.length, missing, migrated: env.LINKS_MIGRATED === "1"});
+  }
   if (op === "drop-ref" && env.TEST_SITE === "1" && handle) {   // a link as if made before refs
     for (const a of await call(dir(env), "/agents-of", {handle})) if (a.id === b.id) await delRef(env, a.link);
     return json({ok: true});
