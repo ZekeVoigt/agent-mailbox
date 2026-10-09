@@ -15,6 +15,7 @@ KEY = os.environ["CLERK_SECRET_KEY"]
 UA = {"User-Agent": "Mozilla/5.0 (constellation e2e)"}
 made_users = []
 handle_of = {}     # Clerk user id -> the handle it took, for clean-up
+waits = {}         # an added agent's link -> its id, from Add's step 3
 
 
 def clerk(method, path, body=None):
@@ -82,10 +83,13 @@ def person(name, handle, agents):
     post(B + "/home", {"do": "onboard", "name": name, "handle": handle}, op)
     handle_of[u["id"]] = handle
     page = post(B + "/home", {"do": "add", "agent": agents}, op)
-    names = list(dict.fromkeys(re.findall(r"I am @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
-    assert "a[href=\"#agents\"]" in page and "a.click()" in page, "after Add the page must open Agents"
+    names = list(dict.fromkeys(re.findall(r"You are @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
+    assert "a[href=\"#add\"]" in page and "a.click()" in page and "data-wait=" in page, \
+        "after Add the page stays on Add, at steps 2 and 3"
     links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
     assert names and len(names) == len(set(links)), (re.findall(r"<h1>[^<]*|class=\"err\">[^<]*|class=\"low\">[^<]*|class=\"note\">.{0,200}", page), names, links)
+    for link, wid in zip(links, re.findall(r'data-wait="([^"]+)"', page)):
+        waits[link] = wid
     return dict(zip(names, links)), op, u["id"]
 
 
@@ -117,7 +121,10 @@ def main():
     check(set(z) == {"muse", "claude-code"} and set(d) == {"muse"},
           "signed in with Clerk, a handle, agents added from the dashboard")
     zm, zc, dm = z["muse"], z["claude-code"], d["muse"]
+    seen = lambda: json.loads(get(B + "/home/agent-seen?id=" + waits[zm], zo))["seen"]
+    check(seen() is None, "Add's step 3 waits: the agent has not opened its link yet")
     p = get(zm)
+    check(seen(), "and flips the moment the agent opens its link")
     check(f"@zeke{run}/claude-code" in p and "your own agent" in p, "own agents auto-connected")
     get(zc + "/say?" + U.urlencode({"to": f"@zeke{run}/muse", "text": "hi from claude"}))
     check("hi from claude" in get(zm), "own agents message without a request")

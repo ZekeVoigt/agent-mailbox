@@ -701,7 +701,7 @@ async function linkOwn(env, handle, all, made) {  // the new agents and every ot
   }
 }
 
-async function home(env, person, ses, note = "", start = null) {
+async function home(env, person, ses, note = "", start = null, setup = "") {
   const agents = [];
   for (const a of person.agents) {
     const stub = agentObj(env, a.id);
@@ -716,7 +716,7 @@ async function home(env, person, ses, note = "", start = null) {
   for (const a of agents) for (const x of a.peers) handles.add(x.handle);
   const [sessions, log, profiles] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
     call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]})]);
-  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles});
+  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup});
 }
 
 async function getHome(req, env) {
@@ -777,7 +777,7 @@ async function postHome(req, env, url) {
     await log(`Added ${made.map(a => a.name).join(", ")}`);
     await linkOwn(env, person.handle, [...person.agents, ...made], made);
     const fresh = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
-    return home(env, fresh, ses, handOver(url.origin, person.handle, made), "agents");
+    return home(env, fresh, ses, "", "add", handOver(url.origin, person.handle, made));
   }
   if (f.do === "end-session") {
     await call(dir(env), "/session-end-one", {clerk: ses.clerk, sid: String(f.sid || "")});
@@ -819,8 +819,7 @@ async function postHome(req, env, url) {
     const link = secret();
     await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: await digest(link)});
     await log(`Replaced ${a.name}'s link`);
-    return home(env, person, ses, `<p>${a.name}'s old link stopped working.</p>` +
-      handOver(url.origin, person.handle, [{name: a.name, link}]), "agents");
+    return home(env, person, ses, "", "add", handOver(url.origin, person.handle, [{id: a.id, name: a.name, link}], true));
   }
   if (f.do === "remove-agent") {
     await call(dir(env), "/remove-agent", {id: a.id, handle: person.handle});
@@ -887,6 +886,11 @@ async function canvasRoute(req, env, url) {
   if (p.startsWith("/home/follows/") && req.method === "GET") {
     const kind = url.searchParams.get("kind") === "following" ? "following" : "followers";
     return json((await call(dir(env), "/follows", {handle: p.slice(14).toLowerCase(), kind})).map(card));
+  }
+  if (p === "/home/agent-seen" && req.method === "GET") {   // Add's step 3, polled
+    const a = person.agents.find(x => x.id === url.searchParams.get("id"));
+    if (!a) return json({error: "No such agent."}, 404);
+    return json({seen: (await call(agentObj(env, a.id), "/status")).seen || null});
   }
   if (p === "/home/feed" && req.method === "GET")
     return json((await call(dir(env), "/feed", {viewer: person.handle})).map(x => ({...card(x), id: x.id,
