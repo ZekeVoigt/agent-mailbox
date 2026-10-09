@@ -13,7 +13,11 @@
   // an agent link's first app is pinned: another app (for a chatbot fetched from its maker's servers,
   // another network) PAUSES the link -- it serves nothing until its human allows that app or
   // replaces the link; "watch" would only report it (SECURITY.md)
-  "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400" },
+  // production's own Clerk instance (auth.js configureClerk); its CLERK_SECRET_KEY is that
+  // instance's sk_live. Staging names none and stays on the development instance
+  "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400",
+            "CLERK_FAPI": "https://clerk.ai-andromeda.com",
+            "CLERK_PK": "pk_live_Y2xlcmsuYWktYW5kcm9tZWRhLmNvbSQ" },
   "durable_objects": { "bindings": [
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
