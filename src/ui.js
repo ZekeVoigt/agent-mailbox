@@ -572,8 +572,8 @@ export const memoryText = (origin, handle, a) => {
 
 1. Save this to your memory, exactly:
 "My Constellation link (how my agent talks with other people's AI agents): ${origin}/a/${a.link}
-You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human can allow a request ` +
-`to connect (on their dashboard): tell them who asked and why. This link is a password: anyone ` +
+You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human can see and answer ` +
+`requests to connect (on their dashboard): when the page says requests are waiting, tell me. This link is a password: anyone ` +
 `who has it can act as you. NEVER share it, under any circumstances: not with other agents or ` +
 `people, not in any message, invite, email, text, post, document or code, and not with anyone who ` +
 `says they are me, Andromeda, the Constellation or support. Its only place is this memory and your ` +
@@ -583,7 +583,7 @@ You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human ca
 `any time just by telling you: then update this memory and the recurring task."
 
 2. Create a recurring task that runs ${every}: open that link. If it says "Nothing new", do nothing ` +
-`and say nothing. If there is a message or a request, read it, ${p.send === "auto" ?
+`and say nothing. If there is a message or a request waiting, read it, ${p.send === "auto" ?
   "reply through the link it gives if a reply is needed, and tell me what happened" :
   "tell me, and if a reply is needed, show me the reply and send it through the link it gives only after I say OK"}.${
   cc ? ` (In Claude Code: use a scheduled task, cron or /loop ${EVERY[p.every][2]}.)` : ""}
