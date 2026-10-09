@@ -20,6 +20,8 @@ export const logo = name => (MARKS[tileOf(name)?.id] || MARKS.agent);
 const shownName = name => tileOf(name)?.name || name;
 
 const ADD_ICON = ICONS.add;
+const HOUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+  'stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10.5 12 3.5l8.5 7V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5A1.5 1.5 0 0 1 3.5 19z"/></svg>';
 const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
   'stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 ' +
   '1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 ' +
@@ -509,6 +511,84 @@ overflow:hidden;font-size:14px;border-radius:8px}
 .psched .st{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--soft)}
 .pgrid .tile .tb.dim{color:var(--dim);filter:none}
 @media (max-width:760px){.ctool{width:34px;height:34px}.ggrid{grid-template-columns:repeat(2,1fr)}}
+
+/* -- Home: one column, Instagram's way ------------------------------------------------------- */
+.main:has(>#home:not([hidden])){padding-top:12px}
+.fd{max-width:470px;margin:0 auto}
+.ftop{display:flex;align-items:center;justify-content:space-between;margin:0 0 10px}
+.ftop h1{margin:0;font-size:22px}
+.fnew{width:38px;height:38px;margin:0;padding:0;color:var(--ink);background:none;border-radius:50%}
+.fnew:hover{background:#262626}
+.fnew svg{width:24px;height:24px}
+.frow{display:flex;gap:14px;margin:0 0 18px;padding:4px 2px 10px;overflow-x:auto;scrollbar-width:none}
+.frow[hidden]{display:none}
+.frow::-webkit-scrollbar{display:none}
+.frow .fp{display:flex;flex-direction:column;align-items:center;gap:5px;flex:none;width:68px;margin:0;padding:0;background:none}
+.frow .fp:hover{background:none}
+.frow .face{width:62px;height:62px;font-size:22px;box-shadow:0 0 0 2px #0e0e0e,0 0 0 4px #3a3a3a}
+.frow .face img{width:100%;height:100%;object-fit:cover}
+.frow .fp span{max-width:68px;overflow:hidden;font-size:12px;font-weight:400;color:var(--soft);text-overflow:ellipsis;white-space:nowrap}
+.fpost{margin:0 0 30px}
+.fhd{display:flex;align-items:center;gap:8px;margin:0 0 10px}
+.fwho{display:flex;align-items:center;gap:10px;width:auto;margin:0;padding:0;text-align:left;background:none}
+.fwho:hover{background:none}
+.fwho .face{width:36px;height:36px;font-size:14px}
+.fwho .face img{width:100%;height:100%;object-fit:cover}
+.fwho b{display:block;font-size:14px;font-weight:600}
+.fwho small{display:block;font-size:12.5px;font-weight:400;color:var(--dim)}
+.fhd .via{margin-left:auto;font-size:12px;color:var(--dim)}
+.car{position:relative;overflow:hidden;background:#111;border-radius:8px;user-select:none}
+.ctrack{display:flex;height:100%;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+.ctrack::-webkit-scrollbar{display:none}
+.slide{position:relative;flex:none;width:100%;height:100%;scroll-snap-align:start}
+.slide img,.slide video{display:block;width:100%;height:100%;object-fit:cover}
+.car .arr{position:absolute;top:50%;width:30px;height:30px;margin:-15px 0 0;padding:0;color:#111;background:rgba(250,250,250,.75);border-radius:50%;opacity:0;transition:opacity .15s}
+.car:hover .arr{opacity:1}
+.car .arr[hidden]{display:none}
+.car .arr svg{width:18px;height:18px}
+.car .prev{left:10px}.car .next{right:10px}
+.snd{position:absolute;right:10px;bottom:10px;width:30px;height:30px;margin:0;padding:0;color:#fff;background:rgba(0,0,0,.6);border-radius:50%}
+.snd svg{width:16px;height:16px}
+.dots{display:flex;justify-content:center;gap:4px;margin:10px 0 0}
+.dots i{width:6px;height:6px;background:#3a3a3a;border-radius:50%}
+.dots i.on{background:var(--ink)}
+.burst{position:absolute;left:50%;top:50%;width:96px;height:96px;margin:-48px 0 0 -48px;color:#fff;pointer-events:none;
+filter:drop-shadow(0 4px 16px rgba(0,0,0,.4));animation:burst .9s ease-out forwards}
+.burst svg{width:100%;height:100%}
+@keyframes burst{0%{transform:scale(.2);opacity:0}15%{transform:scale(1.1);opacity:1}30%{transform:scale(.95)}70%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.05)}}
+.ftext{margin:0 0 4px;font-size:17px;line-height:1.5;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.facts{display:flex;gap:4px;margin:6px 0 0 -8px}
+.fa{width:40px;height:40px;margin:0;padding:0;color:var(--ink);background:none;border-radius:50%}
+.fa:hover{color:var(--mute);background:none}
+.fa svg{width:24px;height:24px}
+.fa.on{color:#ff3040}
+.fa.pop svg{animation:pop .35s ease-out}
+@keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+.flikes{font-size:14px;font-weight:600}
+.flikes[hidden]{display:none}
+.cap{margin:4px 0 0;font-size:14px;line-height:1.45;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+.cap b{color:var(--ink);font-weight:600;cursor:pointer}
+.fmore{display:block;width:auto;margin:4px 0 0;padding:0;font-size:14px;font-weight:400;color:var(--dim);background:none}
+.fmore:hover{color:var(--mute);background:none}
+.fpost .thread{margin:8px 0 0}
+.fpost .thread[hidden]{display:none}
+.fpost .reply{display:flex;gap:8px;padding:6px 0}
+.fpost .reply .face{width:26px;height:26px;font-size:11px}
+.fpost .reply .face img{width:100%;height:100%;object-fit:cover}
+.fpost .reply b{font-size:13px;font-weight:600}
+.fpost .reply small{font-size:11.5px;color:var(--dim)}
+.fpost .reply p{margin:1px 0 0;font-size:13.5px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+.fpost .reply .del{width:auto;margin:0;padding:0;font-size:11.5px;color:var(--dim);background:none}
+.fpost form.rf{display:flex;gap:6px;margin:6px 0 0}
+.fpost form.rf input{flex:1;min-width:0;margin:0}
+.fpost form.rf button{width:auto;margin:0;padding:6px 14px;font-size:13px}
+.ftail{padding:10px 0 30px;text-align:center;font-size:13px;color:var(--dim)}
+.fempty,.fend{display:flex;flex-direction:column;align-items:center;gap:6px;padding:40px 0}
+.fempty b,.fend b{font-size:18px;color:var(--ink)}
+.fempty p{margin:0;color:var(--dim)}
+.fempty button{width:auto;margin:8px 0 0;padding:9px 20px}
+@media (max-width:760px){.main:has(>#home:not([hidden])){padding:12px 0 28px}.ftop,.frow,.fhd,.facts,.flikes,.cap,.fmore,.fpost .thread,.fpost .ppoll,.fpost .pquote,.ftext{margin-left:12px;margin-right:12px}
+.facts{margin-left:4px}.car{border-radius:0}.dots{margin-top:8px}}
 `;
 
 const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${cls}">${
@@ -928,6 +1008,7 @@ activity. People you talked with keep their own copy of what was said, as with e
 <button class="ghost">Delete my account</button></form></details>`;
 
   const views = [
+    ["home", "Home", "", `<div class="fd" id="feed"></div>`, HOUSE],
     ["connections", "Connections", "You, your agents, and the people they can talk to.",
       graph(person, agents, profiles), ICONS.connections],
     ["activity", "Activity", "Requests to connect, follows, likes and replies.",
@@ -945,9 +1026,9 @@ for 30 days.</p><div class="rows">${requests}</div></section><h2 class="earlier"
     ["settings", "Settings", "Privacy, where you're signed in, and what happened on your account.",
       privacy + devices + activity + danger, GEAR, true],
   ];
-  const first = start || (asked.length ? "activity" : !agents.length ? "add" : "connections");
+  const first = start || (!agents.length ? "add" : "home");
   const main = views.map(([v, t, d, body]) => `<section class="view" id="${v}"${v === first ? "" : " hidden"}>
-${v === "connections" || v === "profile" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
+${v === "connections" || v === "profile" || v === "home" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
   const top = views.filter(x => !x[5]).map(([v, t, , , icon]) => `<a href="#${v}"${v === first ? ' aria-current="page"' : ""}${
     v === "activity" ? ` data-unread="${unread}"` : ""}${
     v === "activity" && asked.length ? ' class="pip"' : ""}>${icon}<span data-short="${
@@ -1076,7 +1157,6 @@ const BOARD = `
     } else el.appendChild(h("div", {class: "posts"}, b.posts.length ? b.posts.map(function(x){
       return postEl(el, x, b.self, function(){ render(el, b.handle); });
     }) : [h("p", {class: "muted", text: b.self ? "Nothing posted yet." : "No posts yet."})]));
-    if (b.self) feed(el);
   };
   var actions = function(el, b){
     var row = h("div", {class: "bacts"});
@@ -1322,7 +1402,7 @@ const BOARD = `
       h("button", {type: "button", class: "x", "aria-label": "Close", text: "×", onclick: shut}),
       composer({photo: img ? img.getAttribute("src") : null, name: ME, handle: ME}, function(){
         shut(); var pg = document.querySelector(".pp .bd[data-page]"); if (pg && !document.getElementById("profile").hidden) render(pg, ME);
-      }, {quote: x})])]);
+      }, {quote: x || null})])]);
     m.addEventListener("click", function(e){ if (e.target === m) shut(); });
     document.addEventListener("keydown", esc_);
     document.body.appendChild(m);
@@ -1586,6 +1666,126 @@ const BOARD = `
     var fill = function(){ if (!pview.hidden) render(page, ME); };
     new MutationObserver(fill).observe(pview, {attributes: true, attributeFilter: ["hidden"]});
     fill();
+  }
+
+  // -- Home: the posts of the people you follow, newest first, Instagram's way --------------------
+  // faces of the people you follow up top; then one column of posts: who, the pictures (swiped,
+  // a dot each), the video playing muted while it is in view, the heart, reply and share, the
+  // likes, the caption, the replies. A double click or tap on a picture likes it.
+  var HPATH = '<path d="M12 20.3s-7.4-4.5-9.2-9.1C1.5 8 3.4 4.6 7 4.6c2.1 0 3.6 1.2 5 3 1.4-1.8 2.9-3 5-3 3.6 0 5.5 3.4 4.2 6.6-1.8 4.6-9.2 9.1-9.2 9.1z"/>';
+  var HEART0 = SVG(HPATH), HEART1 = SVG(HPATH, true), REPLY = SVG('<path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.2A8 8 0 1 1 20 11.5z"/>'),
+    SHARE = SVG('<path d="M21 3 10.2 13.8M21 3l-6.8 18-4-7.2L3 9.8z"/>'), SOUND0 = SVG('<path d="M11 5 6 9H3v6h3l5 4zM22 9l-6 6M16 9l6 6"/>'),
+    SOUND1 = SVG('<path d="M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>'),
+    PREV = SVG('<path d="m15 6-6 6 6 6"/>'), NEXT = SVG('<path d="m9 6 6 6-6 6"/>');
+  var views = new IntersectionObserver(function(es){   // a video plays while most of it is in view
+    es.forEach(function(en){ var v = en.target; if (en.intersectionRatio > 0.6) { var p_ = v.play(); if (p_) p_.catch(function(){}); } else v.pause(); });
+  }, {threshold: [0, 0.6, 1]});
+  var burst = function(box){
+    var b_ = h("span", {class: "burst"}); b_.innerHTML = HEART1; box.appendChild(b_);
+    setTimeout(function(){ b_.remove(); }, 900);
+  };
+  var carousel = function(x, like){
+    var m = x.media; if (!m || !m.length) return null;
+    var r = m[0].w && m[0].h ? m[0].w / m[0].h : 1; r = Math.max(0.8, Math.min(1.91, r));
+    var track = h("div", {class: "ctrack"}), car = h("div", {class: "car"}, [track]);
+    car.style.aspectRatio = String(r);
+    m.forEach(function(it){
+      var s;
+      if (it.type === "image") s = h("img", {src: it.url, alt: "", loading: "lazy", draggable: "false"});
+      else {
+        s = h("video", {src: it.url, loop: "", playsinline: "", preload: "metadata"}); s.muted = true; views.observe(s);
+      }
+      var slide = h("div", {class: "slide"}, [s]);
+      if (it.type === "gif") slide.appendChild(h("span", {class: "gtag", text: "GIF"}));
+      if (it.type === "video") {
+        var snd = h("button", {type: "button", class: "snd", "aria-label": "Sound"}); snd.innerHTML = SOUND0;
+        snd.addEventListener("click", function(e){ e.stopPropagation(); s.muted = !s.muted; snd.innerHTML = s.muted ? SOUND0 : SOUND1; });
+        slide.appendChild(snd);
+      }
+      track.appendChild(slide);
+    });
+    car.addEventListener("dblclick", function(e){ e.preventDefault(); like(true); burst(car); });
+    var last = 0;                       // a double tap on a phone
+    car.addEventListener("touchend", function(e){ var t = Date.now(); if (t - last < 300) { e.preventDefault(); like(true); burst(car); } last = t; });
+    if (m.length < 2) return car;
+    var dots = h("div", {class: "dots"}, m.map(function(){ return h("i"); }));
+    var go = function(k){ track.scrollTo({left: k * track.clientWidth, behavior: "smooth"}); };
+    var at = function(){ return Math.round(track.scrollLeft / Math.max(1, track.clientWidth)); };
+    var pv = h("button", {type: "button", class: "arr prev", "aria-label": "Previous", onclick: function(){ go(at() - 1); }});
+    var nx = h("button", {type: "button", class: "arr next", "aria-label": "Next", onclick: function(){ go(at() + 1); }});
+    pv.innerHTML = PREV; nx.innerHTML = NEXT;
+    var mark = function(){ var k = at(); [].forEach.call(dots.children, function(d, i){ d.className = i === k ? "on" : ""; });
+      pv.hidden = k === 0; nx.hidden = k === m.length - 1; };
+    track.addEventListener("scroll", function(){ requestAnimationFrame(mark); });
+    car.appendChild(pv); car.appendChild(nx); car.appendChild(h("span", {class: "count", text: ""}));
+    setTimeout(mark, 0);
+    return h("div", {}, [car, dots]);
+  };
+  var fcard = function(x){
+    var heart = h("button", {type: "button", class: "fa", "aria-label": "Like"});
+    var likes = h("div", {class: "flikes"});
+    var paint = function(){ heart.innerHTML = x.liked ? HEART1 : HEART0; heart.classList.toggle("on", x.liked);
+      likes.textContent = x.likes + (x.likes === 1 ? " like" : " likes"); likes.hidden = !x.likes; };
+    var like = function(on){ if (on === x.liked) return; x.liked = on; x.likes += on ? 1 : -1; paint();
+      heart.classList.remove("pop"); void heart.offsetWidth; if (on) heart.classList.add("pop");
+      send("/home/like", {post: x.id, on: on}).catch(function(){}); };
+    heart.addEventListener("click", function(){ like(!x.liked); });
+    var thread = h("div", {class: "thread", hidden: ""});
+    var more = h("button", {type: "button", class: "fmore", text: x.replies ? "View all " + x.replies + (x.replies === 1 ? " reply" : " replies") : "Add a reply…"});
+    var openThread = function(){ thread.hidden = !thread.hidden; if (!thread.hidden) { loadThread(thread, x, more);
+      setTimeout(function(){ var i = thread.querySelector("input"); if (i) i.focus(); }, 300); } };
+    more.addEventListener("click", openThread);
+    var rp = h("button", {type: "button", class: "fa", "aria-label": "Reply", onclick: openThread}); rp.innerHTML = REPLY;
+    var sh = h("button", {type: "button", class: "fa", "aria-label": "Quote", onclick: function(){ quoteIt(x); }}); sh.innerHTML = SHARE;
+    paint();
+    var media = carousel(x, like);
+    var words = x.text ? (media ? h("p", {class: "cap"}, [h("b", {text: x.name || "@" + x.handle, onclick: function(){ board(x.handle); }}), " ", x.text]) :
+      h("p", {class: "ftext", text: x.text})) : null;
+    if (words && !media) words.addEventListener("dblclick", function(){ like(true); });
+    var head = h("header", {class: "fhd"}, [h("button", {type: "button", class: "fwho", onclick: function(){ board(x.handle); }},
+      [face(x.photo, x.name || x.handle), h("span", {}, [h("b", {text: x.name || "@" + x.handle}), h("small", {text: "@" + x.handle + " · " + ago(x.at)})])]),
+      x.agent ? h("span", {class: "via", text: "by their " + x.agent}) : null]);
+    return h("article", {class: "fpost"}, [head, media, media ? null : words, pollEl(x, false), quoteCard(x.quote),
+      h("div", {class: "facts"}, [heart, rp, sh]), likes, media ? words : null, more, thread]);
+  };
+  var feedView = document.getElementById("home"), feedBox = document.getElementById("feed");
+  if (feedView && feedBox) {
+    var cursor = 0, busy_ = false, done_ = false, loaded = 0;
+    var ring = h("div", {class: "frow", hidden: ""}), list_ = h("div", {class: "flist"}), tail = h("div", {class: "ftail"});
+    var top_ = h("div", {class: "ftop"}, [h("h1", {text: "Home"}), h("button", {type: "button", class: "fnew", "aria-label": "New post",
+      onclick: function(){ quoteIt(null); }})]);
+    top_.lastChild.innerHTML = PLUS;
+    feedBox.appendChild(top_); feedBox.appendChild(ring); feedBox.appendChild(list_); feedBox.appendChild(tail);
+    var more_ = function(){
+      if (busy_ || done_) return; busy_ = true;
+      tail.textContent = "Loading…";
+      get("/home/feed" + (cursor ? "?before=" + cursor : "")).then(function(xs){
+        busy_ = false; tail.textContent = "";
+        xs.forEach(function(x){ list_.appendChild(fcard(x)); });
+        if (xs.length) cursor = xs[xs.length - 1].at;
+        if (xs.length < 20) {
+          done_ = true;
+          if (!list_.childNodes.length) tail.appendChild(h("div", {class: "fempty"}, [h("b", {text: "Your feed is empty"}),
+            h("p", {text: "Follow people to see their photos, videos and posts here."}),
+            h("button", {type: "button", text: "Find people", onclick: function(){
+              var a = document.querySelector('.nav a[href="#connections"]'); if (a) a.click();
+              setTimeout(function(){ var i = document.querySelector(".graph .find input"); if (i) i.focus(); }, 80); }})]));
+          else tail.appendChild(h("div", {class: "fend"}, [h("b", {text: "You're all caught up"}), h("small", {text: "You've seen every post from the people you follow."})]));
+        }
+      }, function(err){ busy_ = false; tail.textContent = String(err); });
+    };
+    var start = function(){
+      cursor = 0; done_ = false; list_.textContent = ""; tail.textContent = ""; loaded = Date.now(); more_();
+      get("/home/follows/" + encodeURIComponent(ME) + "?kind=following").then(function(xs){
+        ring.textContent = ""; ring.hidden = !xs.length;
+        xs.forEach(function(x){ ring.appendChild(h("button", {type: "button", class: "fp", onclick: function(){ board(x.handle); }},
+          [face(x.photo, x.name || x.handle), h("span", {text: (x.name || x.handle).split(" ")[0]})])); });
+      }, function(){});
+    };
+    new IntersectionObserver(function(es){ if (es[0].isIntersecting && loaded) more_(); }, {rootMargin: "600px"}).observe(tail);
+    var seen_ = function(){ if (!feedView.hidden && (!loaded || Date.now() - loaded > 120e3)) start(); };
+    new MutationObserver(seen_).observe(feedView, {attributes: true, attributeFilter: ["hidden"]});
+    seen_();
   }
 
   // a panel with a board opens: the board is drawn fresh
