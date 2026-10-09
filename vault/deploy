@@ -31,9 +31,10 @@ refuse() { echo "deploy refused: $*" >&2; exit 1; }
 sha=$(git rev-parse HEAD)
 epoch=$(git log -1 --format=%ct)
 echo "== build git:$sha for linux/amd64 (SOURCE_DATE_EPOCH=$epoch)"
-SOURCE_DATE_EPOCH=$epoch docker buildx build --platform linux/amd64 -f vault/Dockerfile \
-  --build-arg SOURCE_DATE_EPOCH="$epoch" \
-  --output "type=image,name=$IMG:git-$sha,push=true,rewrite-timestamp=true" . >/dev/null
+# no provenance or SBOM attestations: they carry build times, and the digest must not
+SOURCE_DATE_EPOCH=$epoch docker buildx build --quiet --platform linux/amd64 -f vault/Dockerfile \
+  --build-arg SOURCE_DATE_EPOCH="$epoch" --provenance=false --sbom=false \
+  --output "type=image,name=$IMG:git-$sha,push=true,unpack=false,rewrite-timestamp=true" . >/dev/null
 digest=$(gcloud artifacts docker images describe "$IMG:git-$sha" --format='value(image_summary.digest)')
 [ -n "$digest" ] || refuse "no digest for $IMG:git-$sha"
 echo "   $digest"
