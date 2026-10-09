@@ -64,6 +64,8 @@ async function secrets() {
   const out = {};
   for (const [k, v] of Object.entries(conf.secrets || {})) out[k] = await gcp.secret(v);
   for (const k of conf.secretsFromEnv || []) if (process.env[k]) out[k] = process.env[k];
+  for (const k of conf.required || []) if (!out[k]) throw new Error(`${k} has no value in Secret Manager: refusing to start`);
+  for (const k of Object.keys(conf.secrets || {})) if (!out[k]) log(`secret ${k}: not set`);
   return out;
 }
 

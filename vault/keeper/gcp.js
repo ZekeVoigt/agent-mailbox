@@ -74,8 +74,9 @@ export async function kms(token, key, op, field, value) {
 export async function secret(name) {           // projects/P/secrets/S -> its latest value, or "" if absent
   const r = await fetch(`https://secretmanager.googleapis.com/v1/${name}/versions/latest:access`,
     {headers: {authorization: `Bearer ${await vmToken()}`}});
-  if (r.status === 404) return "";
+  if (r.status === 404) return "";              // no such secret, or no value set yet
   const o = await r.json();
+  if (r.status === 400 && /state DESTROYED|state DISABLED|no versions/i.test(JSON.stringify(o))) return "";
   if (!r.ok) throw new Error(`Secret Manager ${name}: ${r.status} ${JSON.stringify(o).slice(0, 200)}`);
   return Buffer.from(o.payload.data, "base64").toString();
 }
