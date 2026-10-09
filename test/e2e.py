@@ -30,6 +30,33 @@ def clerk(method, path, body=None):
         return json.loads(r.read() or b"{}")
 
 
+FAPI = "https://included-rattler-20.clerk.accounts.dev"
+_attrs = {}
+
+
+def clerk_user(username, test=True):
+    """A Clerk user made through the Backend API with whatever identifier the (shared) instance
+    allows right now: a test phone number if phone sign-in is on, else a +clerk_test email; a
+    username only if usernames are on. Returns (user, the identifier to sign in with)."""
+    if not _attrs:
+        env = json.loads(R.urlopen(R.Request(FAPI + "/v1/environment", headers=UA), timeout=30).read())
+        _attrs.update({k: v.get("enabled") for k, v in env["user_settings"]["attributes"].items()})
+    body = {"password": "Cx-e2e-pass-7731!", "skip_password_checks": True}
+    if test:
+        body["public_metadata"] = {"test": True}
+    if _attrs.get("phone_number"):
+        phone = random.choice([n for n in range(100, 200) if n not in phones])   # a test number, once a run
+        phones.add(phone)
+        body["phone_number"] = [ident := f"+1201555{phone:04d}"]
+    else:
+        body["email_address"] = [ident := f"{username.replace('_', '-')}+clerk_test@example.com"]
+    if _attrs.get("username"):
+        body["username"] = ident = username
+    u = clerk("POST", "/users", body)
+    made_users.append(u["id"])
+    return u, ident
+
+
 def loc(u):
     return re.sub(r"^https?://[^/]+", B, u)
 
@@ -77,7 +104,7 @@ def session(uid):
 def browser_token(username, origin):
     """A session token as a browser on `origin` gets it from Clerk's Frontend API (a fresh dev
     browser, signed in with the password): Clerk names that origin in the token's `azp`."""
-    fapi = "https://included-rattler-20.clerk.accounts.dev"
+    fapi = FAPI
     db = json.loads(R.urlopen(R.Request(fapi + "/v1/dev_browser", b"", headers=UA), timeout=30).read())["token"]
     def fa(path, form):
         req = R.Request(f"{fapi}{path}?__clerk_db_jwt={db}", U.urlencode(form).encode(),
@@ -90,13 +117,7 @@ def browser_token(username, origin):
 def person(name, handle, agents, invite=None):
     """A signed-in person (their browser, an opener with cookies) and their agents' links; with
     `invite`, they open that invite link first, signed in but with no handle yet."""
-    phone = random.choice([n for n in range(100, 200) if n not in phones])   # a test number, once a run
-    phones.add(phone)
-    u = clerk("POST", "/users", {"phone_number": [f"+1201555{phone:04d}"],
-                                 "username": handle.replace("-", "_") + str(random.randint(10, 99)),
-                                 "password": "Cx-e2e-pass-7731!", "skip_password_checks": True,
-                                 "public_metadata": {"test": True}})
-    made_users.append(u["id"])
+    u, _ = clerk_user(handle.replace("-", "_") + str(random.randint(10, 99)))
     op = session(u["id"])
     if invite:
         get(invite, op)
@@ -145,11 +166,7 @@ def get_as(url, ua):
 
 def plain_join(handle):
     """A person signing up as anyone would (no e2e mark): the page after picking a handle."""
-    phone = random.choice([n for n in range(100, 200) if n not in phones])
-    phones.add(phone)
-    u = clerk("POST", "/users", {"phone_number": [f"+1201555{phone:04d}"], "username": handle.replace("-", "_"),
-                                 "password": "Cx-e2e-pass-7731!", "skip_password_checks": True})
-    made_users.append(u["id"])
+    u, _ = clerk_user(handle.replace("-", "_"), test=False)
     op = session(u["id"])
     out = post(B + "/home", {"do": "onboard", "name": "Plain Person", "handle": handle}, op)
     handle_of[u["id"]] = handle
@@ -176,11 +193,7 @@ def main():
     # a real Clerk token, minted for another site that shares the Clerk instance, is refused; the
     # same user's token minted on this site works
     uname = f"azp{run}x{random.randint(10, 99)}"
-    phone = random.choice([n for n in range(100, 200) if n not in phones]); phones.add(phone)
-    au = clerk("POST", "/users", {"phone_number": [f"+1201555{phone:04d}"], "username": uname,
-                                  "password": "Cx-e2e-pass-7731!", "skip_password_checks": True,
-                                  "public_metadata": {"test": True}})
-    made_users.append(au["id"])
+    au, uname = clerk_user(uname)
     def exchange(tok):
         op = R.build_opener(R.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         try:
