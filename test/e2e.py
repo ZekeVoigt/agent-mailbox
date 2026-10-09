@@ -214,6 +214,43 @@ def main():
     bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
     check(bz["posts_n"] == 0 and bz["followers"] == 0, "a post deleted, an unfollow")
     jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o)
+    # likes and replies, and the notifications they make
+    jpost(B + "/home/post", {"text": "second post"}, zo)
+    pid = json.loads(get(B + f"/home/board/zeke{run}", zo))["posts"][0]["id"]
+    jpost(B + "/home/like", {"post": pid, "on": True}, s2o)
+    jpost(B + "/home/like", {"post": pid, "on": True}, s2o)   # twice is still one
+    check(jpost(B + "/home/reply", {"post": pid, "text": "nice one"}, s2o).get("ok"), "the follower replies")
+    seen_post = json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts"][0]
+    check(seen_post["likes"] == 1 and seen_post["liked"] and seen_post["replies"] == 1, "one like, one reply, as the liker sees it")
+    reps = json.loads(get(B + "/home/replies?post=" + pid, zo))
+    check(len(reps) == 1 and reps[0]["text"] == "nice one" and reps[0]["mine"], "the post's owner sees the reply and may delete it")
+    kinds = [n["kind"] for n in json.loads(get(B + "/home/notifs", zo))]
+    check(kinds.count("like") == 1 and "reply" in kinds and "follow" in kinds and "connect" in kinds,
+          "Zeke's Activity: a follow, one like, a reply, and the earlier request to connect")
+    check(json.loads(get(B + "/home/notif-count", zo))["n"] >= 4, "they count as unread")
+    jpost(B + "/home/notifs-read", {}, zo)
+    check(json.loads(get(B + "/home/notif-count", zo))["n"] == 0, "and are read once Activity is opened")
+    jpost(B + "/home/reply-delete", {"id": reps[0]["id"]}, zo)
+    check(json.loads(get(B + "/home/replies?post=" + pid, zo)) == [], "the owner deletes a reply on their post")
+    # a private account: followers it approves see its posts
+    jpost(B + "/home/privacy", {"private": True}, zo)
+    check(json.loads(get(B + f"/home/board/zeke{run}", s2o))["can_see"], "a follower from before still sees a private account")
+    jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, do)
+    bd = json.loads(get(B + f"/home/board/zeke{run}", do))
+    check(bd["private"] and bd["follow_state"] == "asked" and not bd["can_see"] and bd["posts"] == []
+          and refused(lambda: get(B + f"/home/follows/zeke{run}?kind=followers", do))
+          and refused(lambda: jpost(B + "/home/like", {"post": pid, "on": True}, do)),
+          "a new follower of a private account waits: no posts, lists or likes")
+    check(json.loads(get(B + f"/home/board/zeke{run}", zo))["requests"] == 1
+          and [x["handle"] for x in json.loads(get(B + f"/home/follows/zeke{run}?kind=requests", zo))] == [f"dad{run}"]
+          and "follow_request" in [n["kind"] for n in json.loads(get(B + "/home/notifs", zo))],
+          "Zeke sees the follow request, in Activity too")
+    jpost(B + "/home/follow-answer", {"handle": f"dad{run}", "yes": True}, zo)
+    bd = json.loads(get(B + f"/home/board/zeke{run}", do))
+    check(bd["can_see"] and bd["posts"][0]["text"] == "second post"
+          and "follow_accepted" in [n["kind"] for n in json.loads(get(B + "/home/notifs", do))],
+          "approved: Dad sees the posts and is told")
+    jpost(B + "/home/privacy", {"private": False}, zo)
     get(s2["muse"] + "/reach?" + U.urlencode({"to": f"@zeke{run}", "why": "buy my stuff"}))
     acc = re.search(r"decline:\s+(https?://\S+)", get(zm)).group(1)
     check("Declined" in get(acc), "Zeke's Muse may decline")

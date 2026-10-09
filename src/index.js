@@ -23,7 +23,7 @@ const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
 const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
-  MAX_POST = 500, MAX_STATUS = 100;
+  MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -101,9 +101,17 @@ export class Directory {
       CREATE INDEX IF NOT EXISTS post_handle ON post (handle, at);
       CREATE TABLE IF NOT EXISTS follow (follower TEXT, followee TEXT, at INTEGER,
         PRIMARY KEY (follower, followee));
-      CREATE INDEX IF NOT EXISTS follow_followee ON follow (followee);`);
+      CREATE INDEX IF NOT EXISTS follow_followee ON follow (followee);
+      CREATE TABLE IF NOT EXISTS likes (post TEXT, handle TEXT, at INTEGER, PRIMARY KEY (post, handle));
+      CREATE TABLE IF NOT EXISTS reply (id TEXT PRIMARY KEY, post TEXT, handle TEXT, text TEXT, at INTEGER);
+      CREATE INDEX IF NOT EXISTS reply_post ON reply (post, at);
+      CREATE TABLE IF NOT EXISTS notif (id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT, kind TEXT,
+        actor TEXT, ref TEXT, text TEXT, at INTEGER, read INTEGER DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS notif_handle ON notif (handle, at);`);
     try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN status TEXT DEFAULT ''"); } catch {}
+    try { this.sql.exec("ALTER TABLE person ADD COLUMN private INTEGER DEFAULT 0"); } catch {}
+    try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -114,9 +122,45 @@ export class Directory {
       "ORDER BY id != ?, at, name", person.handle, person.primary_agent);
     return person;
   }
-  unfollowAll(handle) {               // a person's posts and follows, both ways
-    this.sql.exec("DELETE FROM post WHERE handle = ?", handle);
+  unfollowAll(handle) {               // a person's posts, follows, likes, replies, notifications
+    for (const x of this.all("SELECT id FROM post WHERE handle = ?", handle)) this.dropPost(x.id);
     this.sql.exec("DELETE FROM follow WHERE follower = ? OR followee = ?", handle, handle);
+    this.sql.exec("DELETE FROM likes WHERE handle = ?", handle);
+    this.sql.exec("DELETE FROM reply WHERE handle = ?", handle);
+    this.sql.exec("DELETE FROM notif WHERE handle = ? OR actor = ?", handle, handle);
+  }
+  dropPost(id) {
+    this.sql.exec("DELETE FROM likes WHERE post = ?", id);
+    this.sql.exec("DELETE FROM reply WHERE post = ?", id);
+    this.sql.exec("DELETE FROM notif WHERE ref = ? AND kind IN ('like', 'reply')", id);
+    this.sql.exec("DELETE FROM post WHERE id = ?", id);
+  }
+  // who may see a person's posts, followers and following: them, anyone if public, else an
+  // approved follower
+  canSee(viewer, handle) {
+    if (viewer === handle) return true;
+    const p = this.one("SELECT private FROM person WHERE handle = ?", handle);
+    if (!p) return false;
+    return !p.private || !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ? AND " +
+      "state = 'on'", viewer, handle);
+  }
+  notify(handle, kind, actor, ref = "", text = "") {
+    if (!handle || handle === actor) return;
+    // one notification a person, a kind and a thing: a like twice is still one
+    if (kind !== "reply") this.sql.exec("DELETE FROM notif WHERE handle = ? AND kind = ? AND actor = ? " +
+      "AND ref = ?", handle, kind, actor, ref);
+    this.sql.exec("INSERT INTO notif (handle, kind, actor, ref, text, at) VALUES (?, ?, ?, ?, ?, ?)",
+      handle, kind, actor, ref, text, Date.now());
+    this.sql.exec("DELETE FROM notif WHERE handle = ? AND id NOT IN (SELECT id FROM notif WHERE " +
+      "handle = ? ORDER BY at DESC LIMIT 200)", handle, handle);
+  }
+  postsFor(viewer, where, ...args) {  // posts with their like and reply counts, as viewer sees them
+    return this.all("SELECT t.id, t.text, t.at, t.handle, p.name, f.at photo, " +
+      "(SELECT count(*) FROM likes l WHERE l.post = t.id) likes, " +
+      "EXISTS (SELECT 1 FROM likes l WHERE l.post = t.id AND l.handle = ?) liked, " +
+      "(SELECT count(*) FROM reply r WHERE r.post = t.id) replies " +
+      "FROM post t JOIN person p ON p.handle = t.handle LEFT JOIN photo f ON f.handle = t.handle " +
+      where, viewer, ...args).map(x => ({...x, liked: !!x.liked}));
   }
   forget(clerk) {                     // everything held about a sign-in but the person row
     if (!clerk) return;
@@ -273,34 +317,130 @@ export class Directory {
     if (p === "/suggest") {
       const q = String(b.q || "").trim().replace(/^@/, "").toLowerCase();
       if (!q) return json([]);
-      return json(this.all("SELECT p.handle, p.name, p.status, f.at photo FROM person p LEFT JOIN " +
+      return json(this.all("SELECT p.handle, p.name, p.status, p.private, f.at photo FROM person p LEFT JOIN " +
         "photo f USING (handle) WHERE p.handle = ? OR (p.findable = 1 AND (p.handle LIKE ? OR " +
         "lower(p.name) LIKE ? OR lower(p.name) LIKE ?)) ORDER BY p.handle != ?, " +
         "p.handle NOT LIKE ?, lower(p.name) NOT LIKE ?, p.name LIMIT 6",
         q, `${q}%`, `${q}%`, `% ${q}%`, q, `${q}%`, `${q}%`));
     }
     if (p === "/board") {
-      const x = this.one("SELECT p.handle, p.name, p.bio, p.status, f.at photo FROM person p " +
+      const x = this.one("SELECT p.handle, p.name, p.bio, p.status, p.private, f.at photo FROM person p " +
         "LEFT JOIN photo f USING (handle) WHERE p.handle = ?", b.handle);
       if (!x) return json(null);
+      const see = this.canSee(b.viewer, b.handle);
+      x.private = !!x.private;
+      x.can_see = see;
       x.agents = this.all("SELECT name FROM agent WHERE handle = ? ORDER BY at", b.handle).map(a => a.name);
-      x.followers = this.one("SELECT count(*) n FROM follow WHERE followee = ?", b.handle).n;
-      x.following = this.one("SELECT count(*) n FROM follow WHERE follower = ?", b.handle).n;
+      x.followers = this.one("SELECT count(*) n FROM follow WHERE followee = ? AND state = 'on'", b.handle).n;
+      x.following = this.one("SELECT count(*) n FROM follow WHERE follower = ? AND state = 'on'", b.handle).n;
       x.posts_n = this.one("SELECT count(*) n FROM post WHERE handle = ?", b.handle).n;
-      x.posts = this.all("SELECT id, text, at FROM post WHERE handle = ? ORDER BY at DESC LIMIT 30", b.handle);
-      x.you_follow = !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
-      x.follows_you = !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ?", b.handle, b.viewer);
+      x.posts = see ? this.postsFor(b.viewer, "WHERE t.handle = ? ORDER BY t.at DESC LIMIT 30", b.handle) : [];
+      const mine = this.one("SELECT state FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
+      x.follow_state = mine ? mine.state : null;           // on | asked | null
+      x.you_follow = !!mine && mine.state === "on";
+      x.follows_you = !!this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ? AND state = 'on'",
+        b.handle, b.viewer);
+      x.requests = b.viewer === b.handle ? this.one("SELECT count(*) n FROM follow WHERE followee = ? " +
+        "AND state = 'asked'", b.handle).n : 0;
       return json(x);
     }
     if (p === "/follows") {           // a person's followers or following, newest first
+      if (!this.canSee(b.viewer, b.handle)) return json({error: "This account is private."});
       const [col, other] = b.kind === "following" ? ["follower", "followee"] : ["followee", "follower"];
+      const state = b.kind === "requests" && b.viewer === b.handle ? "asked" : "on";
+      const [c2, o2] = b.kind === "requests" ? ["followee", "follower"] : [col, other];
       return json(this.all(`SELECT p.handle, p.name, p.status, f.at photo FROM follow w JOIN person p ` +
-        `ON p.handle = w.${other} LEFT JOIN photo f ON f.handle = p.handle WHERE w.${col} = ? ` +
-        `ORDER BY w.at DESC LIMIT 200`, b.handle));
+        `ON p.handle = w.${o2} LEFT JOIN photo f ON f.handle = p.handle WHERE w.${c2} = ? AND w.state = ? ` +
+        `ORDER BY w.at DESC LIMIT 200`, b.handle, state));
     }
-    if (p === "/feed") return json(this.all("SELECT t.id, t.text, t.at, p.handle, p.name, f.at photo " +
-      "FROM post t JOIN follow w ON w.followee = t.handle AND w.follower = ? JOIN person p ON " +
-      "p.handle = t.handle LEFT JOIN photo f ON f.handle = t.handle ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/feed") return json(this.postsFor(b.viewer, "JOIN follow w ON w.followee = t.handle AND " +
+      "w.follower = ? AND w.state = 'on' ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/follow") {
+      if (b.on) {
+        const t = this.one("SELECT private FROM person WHERE handle = ?", b.handle);
+        if (!t) return json({error: "No one by that name."});
+        if (this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle))
+          return json({ok: true});
+        const state = t.private ? "asked" : "on";
+        this.sql.exec("INSERT INTO follow (follower, followee, at, state) VALUES (?, ?, ?, ?)",
+          b.viewer, b.handle, now, state);
+        this.notify(b.handle, state === "asked" ? "follow_request" : "follow", b.viewer);
+        return json({ok: true, state});
+      }
+      this.sql.exec("DELETE FROM follow WHERE follower = ? AND followee = ?", b.viewer, b.handle);
+      this.sql.exec("DELETE FROM notif WHERE handle = ? AND actor = ? AND kind IN ('follow', 'follow_request')",
+        b.handle, b.viewer);
+      return json({ok: true, state: null});
+    }
+    if (p === "/follow-answer") {     // the owner of a private account answers a follow request
+      const r = this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ? AND state = 'asked'",
+        b.follower, b.owner);
+      if (!r) return json({error: "No such request."});
+      if (b.yes) {
+        this.sql.exec("UPDATE follow SET state = 'on', at = ? WHERE follower = ? AND followee = ?",
+          now, b.follower, b.owner);
+        this.notify(b.follower, "follow_accepted", b.owner);
+      } else this.sql.exec("DELETE FROM follow WHERE follower = ? AND followee = ?", b.follower, b.owner);
+      this.sql.exec("UPDATE notif SET kind = ?, read = 1 WHERE handle = ? AND actor = ? AND kind = 'follow_request'",
+        b.yes ? "follow" : "follow_declined", b.owner, b.follower);
+      return json({ok: true});
+    }
+    if (p === "/privacy") {
+      this.sql.exec("UPDATE person SET private = ? WHERE handle = ?", b.private ? 1 : 0, b.handle);
+      if (!b.private) {               // public again: everyone waiting is let in
+        for (const x of this.all("SELECT follower FROM follow WHERE followee = ? AND state = 'asked'", b.handle))
+          this.notify(x.follower, "follow_accepted", b.handle);
+        this.sql.exec("UPDATE follow SET state = 'on' WHERE followee = ? AND state = 'asked'", b.handle);
+        this.sql.exec("UPDATE notif SET kind = 'follow', read = 1 WHERE handle = ? AND kind = 'follow_request'", b.handle);
+      }
+      return json({ok: true});
+    }
+    // -- likes and replies: only on a post the person may see -------------------------------
+    if (p === "/like") {
+      const t = this.one("SELECT handle, text FROM post WHERE id = ?", b.post);
+      if (!t || !this.canSee(b.viewer, t.handle)) return json({error: "That post is gone."});
+      if (b.on) {
+        this.sql.exec("INSERT OR IGNORE INTO likes VALUES (?, ?, ?)", b.post, b.viewer, now);
+        this.notify(t.handle, "like", b.viewer, b.post, t.text.slice(0, 80));
+      } else {
+        this.sql.exec("DELETE FROM likes WHERE post = ? AND handle = ?", b.post, b.viewer);
+        this.sql.exec("DELETE FROM notif WHERE handle = ? AND kind = 'like' AND actor = ? AND ref = ?",
+          t.handle, b.viewer, b.post);
+      }
+      return json({ok: true});
+    }
+    if (p === "/replies") {
+      const t = this.one("SELECT handle FROM post WHERE id = ?", b.post);
+      if (!t || !this.canSee(b.viewer, t.handle)) return json({error: "That post is gone."});
+      return json(this.all("SELECT r.id, r.text, r.at, r.handle, p.name, f.at photo FROM reply r JOIN " +
+        "person p ON p.handle = r.handle LEFT JOIN photo f ON f.handle = r.handle WHERE r.post = ? " +
+        "ORDER BY r.at LIMIT 200", b.post).map(x => ({...x, mine: x.handle === b.viewer || t.handle === b.viewer})));
+    }
+    if (p === "/reply-add") {
+      const t = this.one("SELECT handle FROM post WHERE id = ?", b.post);
+      if (!t || !this.canSee(b.viewer, t.handle)) return json({error: "That post is gone."});
+      if (this.one("SELECT count(*) n FROM reply WHERE handle = ? AND at > ?", b.viewer, now - 86400e3).n >= REPLIES_PER_DAY)
+        return json({error: `At most ${REPLIES_PER_DAY} replies a day.`});
+      this.sql.exec("INSERT INTO reply VALUES (?, ?, ?, ?, ?)", b.id, b.post, b.viewer, b.text, now);
+      this.notify(t.handle, "reply", b.viewer, b.post, b.text.slice(0, 80));
+      return json({ok: true});
+    }
+    if (p === "/reply-del") {         // the reply's writer, or the post's
+      const r = this.one("SELECT r.handle, t.handle owner FROM reply r JOIN post t ON t.id = r.post WHERE r.id = ?", b.id);
+      if (r && (r.handle === b.viewer || r.owner === b.viewer)) this.sql.exec("DELETE FROM reply WHERE id = ?", b.id);
+      return json({ok: true});
+    }
+    // -- notifications ------------------------------------------------------------------------
+    if (p === "/notify") { this.notify(b.handle, b.kind, b.actor, b.ref || "", b.text || ""); return json({ok: true}); }
+    if (p === "/notifs") return json(this.all("SELECT n.id, n.kind, n.actor, n.ref, n.text, n.at, n.read, " +
+      "p.name, f.at photo FROM notif n LEFT JOIN person p ON p.handle = n.actor LEFT JOIN photo f ON " +
+      "f.handle = n.actor WHERE n.handle = ? ORDER BY n.at DESC LIMIT 60", b.handle));
+    if (p === "/notif-count") return json({n: this.one("SELECT count(*) n FROM notif WHERE handle = ? AND read = 0",
+      b.handle).n});
+    if (p === "/notifs-read") {
+      this.sql.exec("UPDATE notif SET read = 1 WHERE handle = ? AND kind != 'follow_request'", b.handle);
+      return json({ok: true});
+    }
     if (p === "/post-add") {
       if (this.one("SELECT count(*) n FROM post WHERE handle = ? AND at > ?", b.handle, now - 86400e3).n >= POSTS_PER_DAY)
         return json({error: `At most ${POSTS_PER_DAY} posts a day.`});
@@ -308,7 +448,7 @@ export class Directory {
       return json({ok: true});
     }
     if (p === "/post-del") {
-      this.sql.exec("DELETE FROM post WHERE id = ? AND handle = ?", b.id, b.handle);
+      if (this.one("SELECT 1 FROM post WHERE id = ? AND handle = ?", b.id, b.handle)) this.dropPost(b.id);
       return json({ok: true});
     }
     if (p === "/status-set") {
@@ -437,6 +577,8 @@ export class Agent {
       // anyone else waits for this side's human, even if this side once asked them
       await this.s.put("peer:" + b.from.id, {...b.from, state: "asked", why: b.why, at: now,
         own: false});
+      try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "connect", actor: b.from.handle,
+        ref: me.name, text: b.why}); } catch {}
       this.wake();
       return json({state: "requested"});
     }
@@ -714,9 +856,11 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
   }
   const handles = new Set([person.handle]);
   for (const a of agents) for (const x of a.peers) handles.add(x.handle);
-  const [sessions, log, profiles] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
-    call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]})]);
-  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup});
+  const [sessions, log, profiles, unread] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
+    call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]}),
+    call(dir(env), "/notif-count", {handle: person.handle})]);
+  return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup,
+    unread: unread.n});
 }
 
 async function getHome(req, env) {
@@ -858,7 +1002,10 @@ async function canvasRoute(req, env, url) {
       people: hits.slice(1).map(x => ({handle: "@" + x.handle}))});
   }
   const photoUrl = x => x.photo ? `/home/photo/${x.handle}?v=${x.photo}` : null;
-  const card = x => ({handle: x.handle, name: x.name || "", status: x.status || "", photo: photoUrl(x)});
+  const card = x => ({handle: x.handle, name: x.name || "", status: x.status || "", photo: photoUrl(x),
+    private: !!x.private});
+  const postOut = x => ({id: x.id, text: x.text, at: x.at, likes: x.likes, liked: x.liked,
+    replies: x.replies, ...card(x)});
   if (p === "/home/suggest" && req.method === "GET") {
     if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "suggest", most: SUGGESTS_PER_HOUR})).ok)
       return json({error: "Too many searches: try again in an hour."}, 429);
@@ -879,13 +1026,16 @@ async function canvasRoute(req, env, url) {
       }
     }
     return json({...card(x), bio: x.bio || "", agents: x.agents, followers: x.followers,
-      following: x.following, posts_n: x.posts_n, posts: x.posts, you_follow: x.you_follow,
+      following: x.following, posts_n: x.posts_n, posts: x.posts.map(postOut), you_follow: x.you_follow,
+      follow_state: x.follow_state, can_see: x.can_see, requests: x.requests,
       follows_you: x.follows_you, self: h === person.handle, link,
       your_agents: h === person.handle ? [] : person.agents.map(a => ({id: a.id, name: a.name}))});
   }
   if (p.startsWith("/home/follows/") && req.method === "GET") {
-    const kind = url.searchParams.get("kind") === "following" ? "following" : "followers";
-    return json((await call(dir(env), "/follows", {handle: p.slice(14).toLowerCase(), kind})).map(card));
+    const kind = ["following", "requests"].includes(url.searchParams.get("kind")) ?
+      url.searchParams.get("kind") : "followers";
+    const got = await call(dir(env), "/follows", {handle: p.slice(14).toLowerCase(), kind, viewer: person.handle});
+    return got.error ? json(got, 403) : json(got.map(card));
   }
   if (p === "/home/agent-seen" && req.method === "GET") {   // Add's step 3, polled
     const a = person.agents.find(x => x.id === url.searchParams.get("id"));
@@ -893,8 +1043,17 @@ async function canvasRoute(req, env, url) {
     return json({seen: (await call(agentObj(env, a.id), "/status")).seen || null});
   }
   if (p === "/home/feed" && req.method === "GET")
-    return json((await call(dir(env), "/feed", {viewer: person.handle})).map(x => ({...card(x), id: x.id,
-      text: x.text, at: x.at})));
+    return json((await call(dir(env), "/feed", {viewer: person.handle})).map(postOut));
+  if (p === "/home/replies" && req.method === "GET") {
+    const got = await call(dir(env), "/replies", {viewer: person.handle, post: url.searchParams.get("post") || ""});
+    return got.error ? json(got, 404) : json(got.map(x => ({id: x.id, text: x.text, at: x.at, mine: x.mine,
+      ...card(x)})));
+  }
+  if (p === "/home/notifs" && req.method === "GET")
+    return json((await call(dir(env), "/notifs", {handle: person.handle})).map(x => ({id: x.id, kind: x.kind,
+      ref: x.ref, text: x.text || "", at: x.at, read: !!x.read, ...card({...x, handle: x.actor})})));
+  if (p === "/home/notif-count" && req.method === "GET")
+    return json(await call(dir(env), "/notif-count", {handle: person.handle}));
   if (req.method !== "POST") return text("Unknown address.", 404);
   if (!sameOrigin(req, url)) return json({error: "That didn't come from this site."}, 403);
   const raw = await req.text();
@@ -937,7 +1096,38 @@ async function canvasRoute(req, env, url) {
     const t = parseTo(f.handle);
     if (!t || t.handle === person.handle) return json({error: "Pick someone else."}, 400);
     const got = await call(dir(env), "/follow", {viewer: person.handle, handle: t.handle, on: !!f.on});
+    return got.error ? json(got, 404) : json({ok: true, state: got.state});
+  }
+  if (p === "/home/follow-answer") {
+    const t = parseTo(f.handle);
+    if (!t) return json({error: "Pick someone."}, 400);
+    const got = await call(dir(env), "/follow-answer", {owner: person.handle, follower: t.handle, yes: !!f.yes});
     return got.error ? json(got, 404) : json({ok: true});
+  }
+  if (p === "/home/privacy") {
+    await call(dir(env), "/privacy", {handle: person.handle, private: !!f.private});
+    await audit(env, req, ses.clerk, f.private ? "Made the account private" : "Made the account public");
+    return json({ok: true});
+  }
+  if (p === "/home/like") {
+    const got = await call(dir(env), "/like", {viewer: person.handle, post: String(f.post || ""), on: !!f.on});
+    return got.error ? json(got, 404) : json({ok: true});
+  }
+  if (p === "/home/reply") {
+    const t = clean(String(f.text || "").replace(/\r/g, ""), MAX_REPLY + 1);
+    if (!t) return json({error: "Write something first."}, 400);
+    if (t.length > MAX_REPLY) return json({error: `At most ${MAX_REPLY} characters.`}, 400);
+    const got = await call(dir(env), "/reply-add", {viewer: person.handle, post: String(f.post || ""),
+      text: t, id: secret(12)});
+    return got.error ? json(got, 400) : json({ok: true});
+  }
+  if (p === "/home/reply-delete") {
+    await call(dir(env), "/reply-del", {viewer: person.handle, id: String(f.id || "")});
+    return json({ok: true});
+  }
+  if (p === "/home/notifs-read") {
+    await call(dir(env), "/notifs-read", {handle: person.handle});
+    return json({ok: true});
   }
   if (p === "/home/invite") {
     const a = person.agents.find(x => x.id === f.agent), to = parseTo(f.person);
