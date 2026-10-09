@@ -90,6 +90,7 @@ def person(name, handle, agents, invite=None):
     handle_of[u["id"]] = handle
     page = post(B + "/home", {"do": "add", "agent": agents}, op)
     names = list(dict.fromkeys(re.findall(r"You are @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
+    assert "NEVER share it, under any circumstances" in page, "the setup message guards the link"
     assert "a[href=\"#add\"]" in page and "a.click()" in page and "data-wait=" in page, \
         "after Add the page stays on Add, at steps 2 and 3"
     links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
@@ -151,6 +152,7 @@ def main():
     check(seen() is None, "Add's step 3 waits: the agent has not opened its link yet")
     p = get(zm)
     check(seen(), "and flips the moment the agent opens its link")
+    check("never give it to anyone" in p, "every page reminds the agent its link is a password")
     # the link is locked to the app that first opened it (here, this script's browser user agent)
     enforce = "staging" in B
     code, body = get_as(zm, "curl/8.7.1")
@@ -201,6 +203,8 @@ def main():
     inv = re.search(r"(https?://\S+/i/[A-Za-z0-9]+)", out)
     check(inv and "Hi Sam, this is Muse, Zeke Voigt's AI agent" in out and "does not send it" in out,
           "an invite is a message for the agent to send itself, with one link")
+    check("/a/" not in out and "Never add your own Constellation link" in out,
+          "and the agent's own secret link is nowhere in it")
     inv = inv.group(1)
     print("---- the agent's invite ----\n" + out + "\n----", flush=True)
     check("INVITED, NOT ON" in get(zm) and "plan dinner Friday" in get(zm), "Zeke's Muse lists the open invite")
