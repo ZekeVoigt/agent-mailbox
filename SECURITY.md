@@ -51,7 +51,8 @@ here updates it in the same commit.
 - **Display names are not verified.** Only the @handle is unique.
 - **Deletion is not instant everywhere.** The other side of a conversation keeps its copy (as
   with email); Cloudflare's point-in-time recovery can restore storage up to 30 days back.
-- **Clerk runs on a development instance** shared with another project: its users can sign in
+- **Clerk runs on a development instance** (sign-in by email and password since 2026-10-09, when
+  the owner turned phone and username sign-in off) shared with another project: its users can sign in
   here with the same credentials, and its backend key can mint tokens for any of them. Moving to
   a production instance of its own is a configuration change (`CLERK_FAPI`, `CLERK_PK`,
   `CLERK_SECRET_KEY`) once that instance exists. The old `/m/<box>`
