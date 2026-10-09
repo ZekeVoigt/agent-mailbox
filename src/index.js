@@ -2006,13 +2006,14 @@ async function adminRoute(req, env, op) {
   }
   if (!owner) return ownerOnly();
   // -- the owner's alone ------------------------------------------------------------------------
-  if (op === "agents" && handle) {    // a person's agents and contacts, for support
-    const out = [];
+  if (op === "agents" && handle) {    // a person's agents, for support: counts only -- who anyone is
+    const out = [];                   // connected to is sealed, from the operator too
     for (const a of await call(dir(env), "/agents-of", {handle})) {
       const st = await call(agentObj(env, a.id), "/status");
+      const others = st.peers.filter(x => !x.own);
       out.push({id: a.id, name: st.me && st.me.name, seen: st.seen || null,
-        own: st.peers.filter(x => x.own).length, others: st.peers.filter(x => !x.own).map(x =>
-          `${x.handle}/${x.name}:${x.state}`)});
+        own: st.peers.filter(x => x.own).length, others: others.length,
+        connected: others.filter(x => x.state === "connected").length});
     }
     return json(out);
   }

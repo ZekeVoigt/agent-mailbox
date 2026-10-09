@@ -1,0 +1,82 @@
+#!/bin/sh
+# The only way to release the Vault:
+#
+#   vault/deploy staging|production
+#
+#  1. refuses a dirty tree: what runs must be a commit anyone can rebuild;
+#  2. builds vault/Dockerfile for linux/amd64 reproducibly (SOURCE_DATE_EPOCH = the commit's time,
+#     timestamps rewritten), pushes it, and reads back its digest;
+#  3. lets Cloud KMS unwrap the deployment's data key for THAT digest -- added to the deployment's key,
+#     and appended to vault/DIGESTS, the public list of every digest ever allowed (commit it);
+#  4. points the VM at the new image (creating it the first time) and restarts it: keeper's SIGTERM
+#     path takes a last snapshot and releases the lease, and the new image restores it;
+#  5. waits until https://<host>/attestation is Google's token for the new digest;
+#  6. revokes KMS for every other digest.
+# DEBUG=1 boots the debug Confidential Space image (logs leave the VM; staging only: production's
+# provider refuses a debug token).
+set -eu
+cd "$(dirname "$0")/.."
+env=${1:-}
+case "$env" in staging|production) ;; *) echo "usage: vault/deploy staging|production" >&2; exit 2 ;; esac
+P=andromeda-host-zv N=589745819159 R=us-east1 Z=us-east1-b
+IMG=$R-docker.pkg.dev/$P/vault/vault
+conf=vault/envs/$env.json
+host=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["host"])' "$conf")
+key=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["kmsKey"])' "$conf")
+vm=vault-$env sa=vault-$env@$P.iam.gserviceaccount.com pool=vault-$env
+refuse() { echo "deploy refused: $*" >&2; exit 1; }
+[ "$env" = production ] && [ "${DEBUG:-}" = 1 ] && refuse "production never runs the debug image"
+[ -z "$(git status --porcelain -- . ':!vault/DIGESTS')" ] || refuse "the working tree has changes; commit them first"
+
+sha=$(git rev-parse HEAD)
+epoch=$(git log -1 --format=%ct)
+echo "== build git:$sha for linux/amd64 (SOURCE_DATE_EPOCH=$epoch)"
+SOURCE_DATE_EPOCH=$epoch docker buildx build --platform linux/amd64 -f vault/Dockerfile \
+  --build-arg SOURCE_DATE_EPOCH="$epoch" \
+  --output "type=image,name=$IMG:git-$sha,push=true,rewrite-timestamp=true" . >/dev/null
+digest=$(gcloud artifacts docker images describe "$IMG:git-$sha" --format='value(image_summary.digest)')
+[ -n "$digest" ] || refuse "no digest for $IMG:git-$sha"
+echo "   $digest"
+
+member="principalSet://iam.googleapis.com/projects/$N/locations/global/workloadIdentityPools/$pool/attribute.image_digest/$digest"
+echo "== allow KMS for this digest"
+gcloud kms keys add-iam-policy-binding "$key" --member="$member" --role=roles/cloudkms.cryptoKeyEncrypterDecrypter >/dev/null
+grep -q " $env git:$sha $digest\$" vault/DIGESTS 2>/dev/null || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $env git:$sha $digest" >> vault/DIGESTS
+
+family=confidential-space; [ "${DEBUG:-}" = 1 ] && family=confidential-space-debug
+meta="^~^tee-image-reference=$IMG@$digest~tee-env-VAULT_ENV=$env~tee-restart-policy=Always~tee-container-log-redirect=true~tee-mount=type=tmpfs,source=tmpfs,destination=/data,size=4294967296"
+if gcloud compute instances describe "$vm" --zone=$Z >/dev/null 2>&1; then
+  echo "== restart $vm on the new image"
+  gcloud compute instances add-metadata "$vm" --zone=$Z --metadata="$meta" >/dev/null
+  gcloud compute instances stop "$vm" --zone=$Z >/dev/null
+  gcloud compute instances start "$vm" --zone=$Z >/dev/null
+else
+  echo "== create $vm"
+  addr=$(gcloud compute addresses describe "$vm" --region=$R --format='value(address)' 2>/dev/null || true)
+  [ -n "$addr" ] || refuse "reserve a static address named $vm in $R and point $host at it (DNS only) first"
+  gcloud compute instances create "$vm" --zone=$Z --machine-type=n2d-standard-2 \
+    --confidential-compute-type=SEV --shielded-secure-boot --maintenance-policy=TERMINATE \
+    --image-project=confidential-space-images --image-family=$family \
+    --service-account="$sa" --scopes=cloud-platform --address="$addr" --tags=vault \
+    --metadata="$meta" >/dev/null
+fi
+
+echo "== wait for https://$host/attestation to name $digest"
+i=0
+until python3 vault/verify.py "https://$host" --digest "$digest" --quiet 2>/dev/null; do
+  i=$((i + 1)); [ $i -gt 90 ] && refuse "the new image did not come up within 15 minutes (it keeps its KMS grant: look at the VM)"
+  sleep 10
+done
+echo "   live"
+
+echo "== revoke KMS for every other digest"
+gcloud kms keys get-iam-policy "$key" --format=json | python3 -c '
+import json, sys
+keep = sys.argv[1]
+for b in json.load(sys.stdin).get("bindings", []):
+    for m in b.get("members", []):
+        if "/attribute.image_digest/" in m and m != keep:
+            print(b["role"], m)' "$member" | while read -r role m; do
+  gcloud kms keys remove-iam-policy-binding "$key" --member="$m" --role="$role" >/dev/null && echo "   revoked ${m##*/}"
+done
+echo "deployed: $env git:$sha $digest -- commit vault/DIGESTS"

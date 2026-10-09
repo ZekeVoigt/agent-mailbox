@@ -5,7 +5,9 @@
 import app, {Directory as D, Agent as A, Ledger as L, LinkRef as R, Box as B} from "./src/index.js";
 
 // -- rate limits: Cloudflare's `ratelimits` bindings ({limit, period} a key), here in memory. One
-// workerd process serves everything, so one map is the whole count (Cloudflare's is approximate)
+// workerd process serves everything, so one map is the whole count, exact. Cloudflare's counters
+// are approximate: its "600 a minute" served 1167 of a 1500 burst (SECURITY.md), and a normal e2e
+// run peaks at 680 from one address -- so the exact limit here is what Cloudflare's let through
 function limiter(name, limit, period) {
   const hits = new Map();             // key -> [window start, count]
   return {
@@ -22,7 +24,7 @@ function limiter(name, limit, period) {
     },
   };
 }
-const RL_IP = limiter("RL_IP", 600, 60), RL_MISS = limiter("RL_MISS", 30, 60);
+const RL_IP = limiter("RL_IP", 1200, 60), RL_MISS = limiter("RL_MISS", 30, 60);
 
 // -- MEDIA: the subset of R2's API the app uses, over keeper's /blob store (encrypted at rest)
 const BLOB = "http://keeper/blob/";
@@ -110,6 +112,11 @@ export default {
         await app.scheduled({cron: "17 * * * *", scheduledTime: Date.now()}, sealed(env), ctx);
         return new Response("ok");
       }
+      // the owner's restore (keeper/restore.js): the deletions to make again, then making them
+      const doCall = async (ns, name, path) => ns.get(ns.idFromName(name)).fetch("https://do" + path,
+        {method: "POST", body: await req.text()});
+      if (url.pathname === "/__vault/ledger-since") return doCall(env.LEDGER, "ledger", "/since");
+      if (url.pathname === "/__vault/reapply") return doCall(env.DIR, "directory", "/reapply");
       return new Response("Unknown.", {status: 404});
     }
     const cf = await cfOf(env, req.headers.get("cf-connecting-ip"));

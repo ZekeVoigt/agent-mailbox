@@ -13,6 +13,12 @@
 	handle /attestation {
 		reverse_proxy 127.0.0.1:8081
 	}
+	# the owner's restore swaps the directory under workerd, so keeper answers it
+	handle /admin/restore {
+		reverse_proxy 127.0.0.1:8081 {
+			header_up cf-connecting-ip {remote_host}
+		}
+	}
 	handle {
 		reverse_proxy 127.0.0.1:8080 {
 			# the caller's address, set here so a client cannot supply its own

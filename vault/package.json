@@ -4,5 +4,8 @@
   "type": "module",
   "dependencies": {
     "workerd": "1.20261009.1"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=60000 test/*.test.js"
   }
 }

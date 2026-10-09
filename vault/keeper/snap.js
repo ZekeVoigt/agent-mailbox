@@ -83,8 +83,10 @@ export class Snapshots {
 
   // one snapshot, if anything changed; returns its seq or 0. `frozen` = workerd already stopped
   take(frozen = false) {
-    this.busy = (this.busy || Promise.resolve()).then(() => this.#take(frozen));
-    return this.busy;
+    if (this.inside) return this.#take(frozen);   // already running exclusively (the owner's restore)
+    const run = (this.busy || Promise.resolve()).then(() => this.#take(frozen));
+    this.busy = run.catch(() => {});
+    return run;
   }
   async #take(frozen) {
     const copied = new Map();         // path -> {mt, size, plain}
@@ -123,6 +125,48 @@ export class Snapshots {
     for (const p of gone) this.seen.delete(p);
     for (const [path, c] of copied) this.seen.set(path, {mt: c.mt, size: c.size, h: c.h});
     return seq;
+  }
+
+  // runs fn while no snapshot is being taken (the owner's restore swaps files under workerd)
+  exclusive(fn) {
+    const go = async () => { this.inside = true; try { return await fn(); } finally { this.inside = false; } };
+    const run = (this.busy || Promise.resolve()).then(go, go);
+    this.busy = run.catch(() => {});
+    return run;
+  }
+
+  // the newest snapshot taken at or before `at` -> [seq, manifest] or [0, null]
+  async at(at) {
+    let cursor = null, best = null;
+    do {
+      const got = await this.store.list("snap/m/", cursor);
+      for (const x of got.items) if (x.created <= at) best = x;
+      cursor = got.cursor;
+    } while (cursor);
+    if (!best) return [0, null];
+    const seq = Number(best.name.slice(7));
+    return [seq, await this.readManifest(seq)];
+  }
+
+  // one directory of a root (e.g. "do/constellation-directory/") put back as manifest m had it;
+  // workerd must be stopped. The next snapshot records the change.
+  async putBack(m, prefix) {
+    const [root, ...rest] = prefix.replace(/\/$/, "").split("/");
+    const dir = join(this.roots[root], ...rest);
+    await rm(dir, {recursive: true, force: true});
+    await mkdir(dir, {recursive: true});
+    let n = 0;
+    for (const [path, f] of Object.entries(m.files)) {
+      if (!path.startsWith(prefix)) continue;
+      const plain = open(this.keys.box, await this.store.get(this.blobName(f.h)), "file:" + f.h);
+      if (mac(this.keys.mac, plain).toString("hex") !== f.h) throw new Error("restore: a file does not match its hash");
+      const p = join(this.roots[root], ...path.split("/").slice(1));
+      await mkdir(dirname(p), {recursive: true});
+      await writeFile(p, plain);
+      n++;
+    }
+    for (const p of [...this.seen.keys()]) if (p.startsWith(prefix)) this.seen.delete(p);
+    return n;
   }
 
   // keep: every manifest of the last hour, the newest of each hour for a day, of each day for a

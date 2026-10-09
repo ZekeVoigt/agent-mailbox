@@ -9,15 +9,16 @@
 // which Caddy passes through from the internet.
 import http from "node:http";
 import {spawn} from "node:child_process";
-import {readFileSync, existsSync, writeFileSync, mkdirSync} from "node:fs";
-import {randomBytes} from "node:crypto";
+import {readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, statSync} from "node:fs";
+import {randomBytes, createHash} from "node:crypto";
 import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {Gcs, Local, Conflict} from "./store.js";
 import {Lease} from "./lease.js";
-import {Snapshots} from "./snap.js";
+import {Snapshots, emptyDirs} from "./snap.js";
 import {blobs, send} from "./blobs.js";
 import {derive} from "./crypto.js";
+import {restorer} from "./restore.js";
 import * as asn from "./asn.js";
 import * as gcp from "./gcp.js";
 
@@ -30,7 +31,7 @@ const ROOTS = {do: join(DATA, "do"), caddy: join(DATA, "caddy")};   // Caddyfile
 const SNAP_EVERY = Number(process.env.VAULT_SNAP_EVERY_S || 15) * 1000;
 const log = s => console.log(`keeper ${new Date().toISOString()} ${s}`);
 
-let workerd = null, caddy = null, stopping = false, lease = null, snaps = null, frozen = false;
+let workerd = null, caddy = null, stopping = false, lease = null, snaps = null, frozen = false, restarting = false;
 
 // -- the data key ------------------------------------------------------------------------------
 async function dataKey(store) {
@@ -68,7 +69,7 @@ async function secrets() {
 
 function start(cmd, args, env, name) {
   const p = spawn(cmd, args, {env, stdio: ["ignore", "inherit", "inherit"]});
-  p.on("exit", (code, sig) => { if (!stopping) { log(`${name} exited (${code ?? sig}); stopping`); shutdown(1); } });
+  p.on("exit", (code, sig) => { if (!stopping && !(restarting && p === workerd)) { log(`${name} exited (${code ?? sig}); stopping`); shutdown(1); } });
   return p;
 }
 
@@ -79,20 +80,37 @@ async function waitFor(port, path, headers = {}) {
   throw new Error(`nothing answered on ${port}`);
 }
 
-// -- /attestation: Google's signed token for this exact image, with the caller's nonce if given
+// -- /attestation: Google's signed token for this exact image. It always carries the SHA-256 of the
+// TLS certificate Caddy serves (made and kept here), so a verifier who compares it with the
+// certificate it connected to knows the TLS key is held inside the attested code -- and, if given,
+// the caller's own nonce, so the token is fresh
 let attCache = null, nonced = [];
+function certHash() {
+  const base = join(DATA, "caddy", "certificates");
+  let best = null;
+  for (const issuer of existsSync(base) ? readdirSync(base) : []) {
+    const f = join(base, issuer, conf.host, conf.host + ".crt");
+    if (existsSync(f) && (!best || statSync(f).mtimeMs > statSync(best).mtimeMs)) best = f;
+  }
+  if (!best) return null;
+  const pem = readFileSync(best, "utf8").match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/);
+  return pem && createHash("sha256").update(Buffer.from(pem[1].replace(/\s+/g, ""), "base64")).digest("hex");
+}
 async function attestation(url, res) {
   if (!existsSync(gcp.TEE_SOCK)) return send(res, 503, "No attestation here: this is not a Confidential Space VM.\n", {"content-type": "text/plain"});
   const nonce = url.searchParams.get("nonce");
-  if (nonce !== null && !/^[A-Za-z0-9_-]{8,64}$/.test(nonce)) return send(res, 400, "A nonce is 8 to 64 characters of A-Z a-z 0-9 _ -.\n");
+  if (nonce !== null && !/^[A-Za-z0-9_-]{10,64}$/.test(nonce)) return send(res, 400, "A nonce is 10 to 64 characters of A-Z a-z 0-9 _ -.\n");
+  const cert = certHash();
+  if (!cert) return send(res, 503, "No certificate yet: try again in a minute.\n");
   try {
     if (nonce) {
       nonced = nonced.filter(t => t > Date.now() - 60e3);
       if (nonced.length >= 20) return send(res, 429, "Too many fresh tokens this minute: try again shortly.\n");
       nonced.push(Date.now());
-      return send(res, 200, await gcp.teeToken(`https://${conf.host}`, [nonce]) + "\n", {"content-type": "text/plain", "cache-control": "no-store"});
+      return send(res, 200, await gcp.teeToken(`https://${conf.host}`, [nonce, cert]) + "\n", {"content-type": "text/plain", "cache-control": "no-store"});
     }
-    if (!attCache || attCache.at < Date.now() - 600e3) attCache = {at: Date.now(), t: await gcp.teeToken(`https://${conf.host}`)};
+    if (!attCache || attCache.cert !== cert || attCache.at < Date.now() - 600e3)
+      attCache = {at: Date.now(), cert, t: await gcp.teeToken(`https://${conf.host}`, [cert])};
     return send(res, 200, attCache.t + "\n", {"content-type": "text/plain", "cache-control": "no-store"});
   } catch (e) {
     log(`attestation: ${e.message}`);
@@ -137,15 +155,18 @@ async function main() {
   const keys = {box: derive(dk, "snapshot"), mac: derive(dk, "mac"), media: derive(dk, "media")};
   dk.fill(0);
   snaps = new Snapshots({store, keys, roots: ROOTS, freeze, held: () => lease.held(), log});
-  for (const d of Object.values(ROOTS)) mkdirSync(d, {recursive: true});
+  // the snapshot is the truth: whatever a previous run left on the tmpfs (a container restart) goes
+  await emptyDirs(ROOTS);
   await snaps.restore();
   log(`asn: ${asn.load(join(VAULT, "asn", "ip2asn-v4.tsv.gz"))} ranges`);
 
   const media = blobs({store, keys, tmp: join(DATA, "tmp")});
+  let restore = null;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://keeper");
     try {
       if (url.pathname === "/attestation" && req.method === "GET") return await attestation(url, res);
+      if (url.pathname === "/admin/restore") return restore ? await restore(req, res) : send(res, 503, "");
       if (url.pathname === "/asn") return send(res, 200, JSON.stringify(asn.lookup(url.searchParams.get("ip"))), {"content-type": "application/json"});
       if (url.pathname.startsWith("/blob")) return await media(req, res, url);
       send(res, 404, "");
@@ -158,12 +179,31 @@ async function main() {
 
   const internal = randomBytes(24).toString("hex");
   // workerd verifies TLS (Clerk, GIPHY) against the CA bundle the image copies from Caddy's
+  const sec = await secrets();
   const env = {PATH: process.env.PATH, HOME: process.env.HOME || "/tmp", VAULT_INTERNAL: internal,
     SSL_CERT_FILE: process.env.SSL_CERT_FILE || "/etc/ssl/certs/ca-certificates.crt",
-    ...conf.vars, ...(await secrets())};
-  workerd = start(conf.workerd || join(VAULT, "node_modules", ".bin", "workerd"),
-    ["serve", join(VAULT, "workerd.capnp"), "--directory-path", `do-disk=${ROOTS.do}`], env, "workerd");
-  await waitFor(8080, "/.well-known/security.txt");
+    ...conf.vars, ...sec};
+  const startWorkerd = async () => {
+    workerd = start(conf.workerd || join(VAULT, "node_modules", ".bin", "workerd"),
+      ["serve", join(VAULT, "workerd.capnp"), "--directory-path", `do-disk=${ROOTS.do}`], env, "workerd");
+    await waitFor(8080, "/.well-known/security.txt");
+  };
+  // workerd stopped (no snapshot running), fn, workerd started again
+  const restartWorkerd = fn => snaps.exclusive(async () => {
+    restarting = true;
+    try {
+      const old = workerd;
+      const gone = new Promise(f => old.once("exit", f));
+      old.kill("SIGTERM");
+      await Promise.race([gone, new Promise(f => setTimeout(f, 5000))]);
+      if (old.exitCode === null && old.signalCode === null) { old.kill("SIGKILL"); await gone; }
+      await snaps.take(true);        // what it held, recorded before anything is swapped
+      await fn();
+      await startWorkerd();
+    } finally { restarting = false; }
+  });
+  restore = restorer({snaps, owner: sec.ADMIN_OWNER, internal, restartWorkerd, log});
+  await startWorkerd();
   caddy = start(conf.caddy || "caddy", ["run", "--config", join(VAULT, "Caddyfile"), "--adapter", "caddyfile"],
     {PATH: process.env.PATH, HOME: process.env.HOME || "/tmp", VAULT_HOST: conf.host, VAULT_DATA: DATA,
       XDG_CONFIG_HOME: join(DATA, "caddy-config"), ...(conf.caddyEnv || {})}, "caddy");
