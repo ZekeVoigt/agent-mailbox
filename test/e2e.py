@@ -206,6 +206,11 @@ def main():
         check("Get a new link" in home, "Agents offers a new link for it")
         fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
         check(get_as(fresh, UA["User-Agent"])[0] == 200, "the new link works")
+        if "staging" in B:            # a notice reaches every account: never from a test on production
+          R.urlopen(R.Request(B + "/admin/notice", json.dumps({"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}).encode(),
+                            headers={**UA, "x-admin": os.environ["ADMIN"]}), timeout=20).read()
+          nt = [n for n in json.loads(get(B + "/home/notifs", s2o)) if n["kind"] == "notice"]
+          check(nt and nt[0]["text"] == "e2e notice" and nt[0]["ref"].endswith("/terms/"), "an operator notice reaches everyone's Activity")
     # the canvas: a profile with a photo, found by name, and asked to connect from the page
     import base64
     jpg = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 4

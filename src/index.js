@@ -451,6 +451,11 @@ export class Directory {
     }
     // -- notifications ------------------------------------------------------------------------
     if (p === "/notify") { this.notify(b.handle, b.kind, b.actor, b.ref || "", b.text || ""); return json({ok: true}); }
+    if (p === "/notice-all") {        // the operator's notice to everyone, e.g. changed terms
+      const people = this.all("SELECT handle FROM person");
+      for (const x of people) this.notify(x.handle, "notice", "", b.ref || "", b.text || "");
+      return json({told: people.length});
+    }
     if (p === "/notifs") return json(this.all("SELECT n.id, n.kind, n.actor, n.ref, n.text, n.at, n.read, " +
       "p.name, f.at photo FROM notif n LEFT JOIN person p ON p.handle = n.actor LEFT JOIN photo f ON " +
       "f.handle = n.actor WHERE n.handle = ? ORDER BY n.at DESC LIMIT 60", b.handle));
@@ -1305,6 +1310,10 @@ async function route(req, env) {
             `${x.handle}/${x.name}:${x.state}`)});
       }
       return json(out);
+    }
+    if (parts[1] === "notice" && clean(b.text, 300)) {
+      const ref = /^https:\/\/(ai-andromeda\.com|agents\.ai-andromeda\.com)\//.test(b.link || "") ? b.link : "";
+      return json(await call(dir(env), "/notice-all", {text: clean(b.text, 300), ref}));
     }
     if (parts[1] === "age-link" && HANDLE_RE.test(b.handle || "")) {
       const a = (await call(dir(env), "/agents-of", {handle: b.handle})).find(x => x.id === b.id);

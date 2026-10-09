@@ -990,6 +990,12 @@ const NOTIFS = `
     });
     if (x.kind === "connect") acts.appendChild(h("a", {href: "#requests", class: "ghost", text: "Open Requests",
       onclick: function(e){ e.preventDefault(); go("requests"); }}));
+    if (x.kind === "notice") {         // from the Constellation itself, to everyone
+      if (x.ref) acts.appendChild(h("a", {href: x.ref, class: "ghost", target: "_blank", rel: "noopener", text: "Read"}));
+      return h("div", {class: "n" + (x.read ? "" : " new")}, [h("i", {class: "face sys", text: "i"}),
+        h("span", {class: "tx"}, [h("b", {text: "The Constellation"}), ": " + (x.text || ""), h("small", {text: ago(x.at)})]),
+        acts.childNodes.length ? acts : null]);
+    }
     if (x.kind === "link_client" || x.kind === "link_expired") {
       var bits = (x.text || "").split("|"), ref = (x.ref || "").split("|");
       var agentName = (bits[0] || "agent").replace(/^muse/, "Muse").replace(/^claude-code/, "Claude Code").replace(/-(\\d+)$/, " $1");
