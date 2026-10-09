@@ -1016,21 +1016,26 @@ const INV_RE = /(?:^|;\s*)inv=([A-Za-z0-9]{20,48})(?:;|$)/;
 const invCookie = raw => `inv=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${INVITE_LIFE / 1000}`;
 const clearInv = "inv=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
 
+// never fails its caller: an invite that cannot be delivered (or a directory still running older
+// code mid-deploy, which answers "unknown") must not break Add or the dashboard
 async function deliverInvites(env, person) {
-  if (!person.agents || !person.agents.length) return;
-  for (const x of await call(dir(env), "/invites-for", {handle: person.handle})) {
+  if (!person || !person.agents || !person.agents.length) return;
+  let list;
+  try { list = await call(dir(env), "/invites-for", {handle: person.handle}); } catch { list = null; }
+  if (!Array.isArray(list)) return;
+  for (const x of list) {
     try {
       await agentObj(env, x.agent).fetch("https://do/reach", {method: "POST", body:
         JSON.stringify({to: "@" + person.handle, why: x.why, base: "https://do"})});
       await call(agentObj(env, x.agent), "/in/joined", {code: x.code, handle: person.handle});
+      await call(dir(env), "/invite-done", {code: x.code});
     } catch (e) { console.error(JSON.stringify({at: "invite", error: String(e && e.message || e)})); }
-    await call(dir(env), "/invite-done", {code: x.code});
   }
 }
 
 async function getInvite(req, env, raw) {
   const code = await digest(raw), inv = await call(dir(env), "/invite-get", {code});
-  if (!inv) return invitePage(null);
+  if (!inv || !inv.handle) return invitePage(null);
   const ses = await sessionOf(env, req);
   const person = ses && await call(dir(env), "/by-clerk", {clerk: ses.clerk});
   if (person) {                      // already here: the request goes straight to them
@@ -1087,7 +1092,7 @@ async function getHome(req, env) {
   }
   const inv = INV_RE.exec(req.headers.get("cookie") || "");
   if (inv) {
-    await call(dir(env), "/invite-claim", {code: await digest(inv[1]), handle: person.handle});
+    try { await call(dir(env), "/invite-claim", {code: await digest(inv[1]), handle: person.handle}); } catch {}
     await deliverInvites(env, person);
     const r = await home(env, await call(dir(env), "/by-clerk", {clerk: ses.clerk}), ses);
     r.headers.append("set-cookie", clearInv);
