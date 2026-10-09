@@ -109,6 +109,10 @@ function clientOf(req) {
     /Mozilla/i.test(ua) ? "a web browser" : "an unknown app";
   return {family, org: String(req.cf?.asOrganization || ""), asn: Number(req.cf?.asn || 0)};
 }
+const PAUSED = "This link is paused: an app it is not locked to opened it, so nothing here can be " +
+  "seen. Its human can allow that app or replace the link on their dashboard. If you are this " +
+  "link's agent, tell your human.";
+const MINUTES = {"1m": 1, "5m": 5, "10m": 10, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440};
 const SERVER_FAMILIES = ["Meta", "ChatGPT", "Google", "Perplexity"];
 const sameClient = (a, b) => a.family === b.family && (!SERVER_FAMILIES.includes(a.family) || a.org === b.org);
 const clientName = c => c.family + (c.org ? ` (${c.org})` : "");
@@ -585,11 +589,15 @@ export class Agent {
   constructor(state, env) { this.state = state; this.s = state.storage; this.env = env; this.waiters = []; this.moved = new Set(); }
 
   // -- the link's life: issued at Add or Replace; dead if not opened within LINK_TTL; the first
-  // client to open it is pinned, and another is reported to the human (refused when LOCK_MODE is
-  // "enforce")
+  // client to open it is pinned. Another app (or, for a chatbot fetched from its maker's servers,
+  // another network) PAUSES the link: from then on it serves nothing to anyone -- the agent itself
+  // included -- until the human allows that app or replaces the link (LOCK_MODE "watch" only
+  // reports it). Every open is counted; an agent's checks coming twice as often as its human chose
+  // (two agents sharing one link) are reported
   ttl() { return Number(this.env.LINK_UNUSED_TTL_S || 86400) * 1000; }
   async issue(now) {
-    await this.s.put({issued: now, expired: false, opened: 0, pins: [], uses: []});
+    await this.s.put({issued: now, expired: false, opened: 0, pins: [], uses: [], paused: null,
+      opens: 0, refused: 0, beats: [], twice: 0});
     await this.s.setAlarm(now + this.ttl());
   }
   async expire(me) {
@@ -605,7 +613,12 @@ export class Agent {
     const [issued, opened] = [await this.s.get("issued"), await this.s.get("opened")];
     if (issued && !opened && Date.now() - issued >= this.ttl() - 1000) await this.expire(me);
   }
-  async gate(me, c, now) {             // null when the link may be used, else the refusal's words
+  async gate(me, c, now, verb, wait) {  // null when the link may be used, else the refusal's words
+    await this.s.put("opens", ((await this.s.get("opens")) || 0) + 1);
+    if (await this.s.get("paused")) {
+      await this.s.put("refused", ((await this.s.get("refused")) || 0) + 1);
+      return [423, PAUSED];
+    }
     let issued = await this.s.get("issued");
     if (!issued) {                     // a link from before links had a life: it lives from now
       issued = now;
@@ -626,12 +639,31 @@ export class Agent {
     if (last && sameClient(last, c) && last.ok === ok) last.at = now;
     else uses.push({...c, at: now, ok});
     await this.s.put("uses", uses.slice(-20));
-    if (ok) return null;
-    try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "link_client", actor: "",
-      ref: `${me.id}|${c.family}|${c.org}`, text: `${me.name}|${clientName(c)}|${clientName(pins[0])}`}); } catch {}
-    if (this.env.LOCK_MODE !== "enforce") return null;
-    return [403, `This link is locked to the app that first used it (${clientName(pins[0])}). Its human ` +
-      "was told, and can allow this one or replace the link."];
+    if (ok) {
+      if (verb === "page" && !wait) await this.beat(me, now);
+      return null;
+    }
+    const watch = this.env.LOCK_MODE === "watch";
+    if (!watch) await this.s.put({paused: {at: now, ...c}, refused: ((await this.s.get("refused")) || 0) + 1});
+    try { await call(dir(this.env), "/notify", {handle: me.handle, kind: watch ? "link_client" : "link_paused",
+      actor: "", ref: `${me.id}|${c.family}|${c.org}`, text: `${me.name}|${clientName(c)}|${clientName(pins[0])}`}); } catch {}
+    return watch ? null : [423, PAUSED];
+  }
+  // the checks' rhythm: the last 24 plain checks (a burst within 15 s is one: an agent at work opens
+  // its page often); when their middle gap is under 60% of the interval the human chose, two agents
+  // are probably checking one link. Reported, at most once a day
+  async beat(me, now) {
+    const was = (await this.s.get("beats")) || [];
+    if (was.length && now - was.at(-1) < 15e3) return;
+    const beats = [...was, now].slice(-24);
+    await this.s.put("beats", beats);
+    if (beats.length < 21) return;
+    const gaps = beats.slice(1).map((t, i) => t - beats[i]).sort((a, b) => a - b);
+    const every = (MINUTES[me.prefs && me.prefs.every] || 5) * 60e3;
+    if (gaps[gaps.length >> 1] >= 0.6 * every || now - ((await this.s.get("twice")) || 0) < 86400e3) return;
+    await this.s.put("twice", now);
+    try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "link_twice", actor: "",
+      ref: me.id, text: me.name}); } catch {}
   }
 
   async me() { return this.s.get("me"); }
@@ -688,13 +720,15 @@ export class Agent {
       const issued = await this.s.get("issued"), opened = await this.s.get("opened");
       const expired = !!(await this.s.get("expired")) || (!!issued && !opened && now - issued > this.ttl());
       return json({me, seen: await this.s.get("seen"), peers, issued, opened, expired,
-        pins: (await this.s.get("pins")) || [], uses: (await this.s.get("uses")) || []});
+        pins: (await this.s.get("pins")) || [], uses: (await this.s.get("uses")) || [],
+        paused: (await this.s.get("paused")) || null, opens: (await this.s.get("opens")) || 0,
+        refused: (await this.s.get("refused")) || 0, twice: (await this.s.get("twice")) || 0});
     }
     if (p === "/issue") { await this.issue(now); return json({ok: true}); }
     if (p === "/owner-allow") {        // the human lets another app use this link
       const pins = (await this.s.get("pins")) || [], c = {family: String(b.family), org: String(b.org || "")};
       if (!pins.some(x => sameClient(x, c))) pins.push({...c, at: now});
-      await this.s.put("pins", pins);
+      await this.s.put({pins, paused: null});        // allowed: the link works again
       return json({ok: true});
     }
     if (p === "/test-age") {           // the operator's, for tests: the link as if made a day ago
@@ -763,7 +797,7 @@ export class Agent {
 
     // -- the agent's own page and links (url carries ?link for building links back) ---------
     if (b.via === "link") {
-      const no = await this.gate(me, b.client || {family: "an unknown app", org: ""}, now);
+      const no = await this.gate(me, b.client || {family: "an unknown app", org: ""}, now, p.slice(1), b.wait);
       if (no) return text(no[1], no[0]);
     }
     const base = b.base;               // https://<host>/a/<secret>
@@ -1097,7 +1131,8 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
       st = await call(stub, "/status");
     }
     agents.push({id: a.id, name: a.name, prefs: st.me && st.me.prefs, seen: st.seen, peers: st.peers, opened: st.opened,
-      expired: st.expired, pins: st.pins || [], uses: st.uses || []});
+      expired: st.expired, pins: st.pins || [], uses: st.uses || [], paused: st.paused || null,
+      opens: st.opens || 0, refused: st.refused || 0, twice: st.twice || 0});
   }
   const handles = new Set([person.handle]);
   for (const a of agents) for (const x of a.peers) handles.add(x.handle);
@@ -1223,6 +1258,14 @@ async function postHome(req, env, url) {
     await call(stub, "/owner-answer", {id: f.id, yes: f.do === "accept", base: ""});
     await log(`${f.do === "accept" ? "Allowed" : "Declined"} a request to ${a.name}`);
     return back(f.do === "accept" ? "connections" : "activity");
+  }
+  if (f.do === "allow-link") {        // a paused link: the app that opened it was theirs after all
+    const st = await call(stub, "/status");
+    if (st.paused) {
+      await call(stub, "/owner-allow", {family: st.paused.family, org: st.paused.org});
+      await log(`Let ${clean(st.paused.family, 40)} use ${a.name}'s link`);
+    }
+    return back("agents");
   }
   if (f.do === "cut") {
     await call(stub, "/owner-cut", {to: f.to});

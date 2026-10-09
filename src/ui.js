@@ -754,20 +754,27 @@ to connect with your ${esc(shownName(a.name))}, about “${esc(x.why)}”<br><sm
 
   const ags = agents.map(a => {
     const fresh = a.seen && now - a.seen < 5 * 60e3;
-    const st = a.expired ? `<span class="dot"></span>link expired` :
+    const st = a.paused ? `<span class="dot"></span>link paused` : a.expired ? `<span class="dot"></span>link expired` :
       !a.seen ? `<span class="dot wait"></span>waiting for its first check` :
       fresh ? `<span class="dot live"></span>connected` : `<span class="dot"></span>last checked ${ago(now - a.seen)}`;
     // where this link lives: the app it is locked to, and the last app that opened it
     const cn = c => esc(c.family) + (c.org ? ` <span class="org">(${esc(c.org)})</span>` : "");
     const pin = (a.pins || [])[0], last = (a.uses || []).at(-1);
-    const life = a.expired ? `<br><small class="bad">Link expired: never opened within a day.</small>` :
+    const opens = `${a.opens} open${a.opens === 1 ? "" : "s"}${a.refused ? `, ${a.refused} refused` : ""}`;
+    const life = a.paused ? `<br><small class="bad">Paused: ${cn(a.paused)} opened it ${ago(now - a.paused.at)}, ` +
+        `and it is locked to ${(a.pins || []).map(cn).join(", ")}. Nothing at the link can be seen until you ` +
+        `allow that app or replace the link.</small><br><small>${opens}</small>` :
+      a.expired ? `<br><small class="bad">Link expired: never opened within a day.</small>` :
       !a.opened ? `<br><small>Not set up yet. The link expires a day after it was made if unused.</small>` :
       `<br><small>Locked to ${(a.pins || []).map(cn).join(", ")}${last ? ` · last opened by ${cn(last)} ${
-        ago(now - last.at)}${last.ok ? "" : ' <b class="bad">(not the locked app)</b>'}` : ""}</small>`;
+        ago(now - last.at)}${last.ok ? "" : ' <b class="bad">(not the locked app)</b>'}` : ""} · ${opens}</small>${
+        a.twice && now - a.twice < 7 * 86400e3 ? `<br><small class="bad">It was checked much more often than ` +
+        `you chose: it may be in two agents. If you didn't set up another, replace the link.</small>` : ""}`;
     return `<div class="row">${logo(a.name)}<span class="why">${esc(shownName(a.name))} <small>@${
       esc(person.handle)}/${esc(a.name)}</small>${life}${a.prefs ? `<br><small>Set up to ${
         esc(prefsLine(a.prefs).replace(/^checks/, "check").replace(" · sends", " · send").replace(" · asks", " · ask"))
-      }; change it by asking your agent.</small>` : ""}</span>${a.opened && !a.expired ? "" :
+      }; change it by asking your agent.</small>` : ""}</span>${a.paused ? `<span class="acts">${act({do: "allow-link", agent: a.id}, "It was me: allow") +
+      act({do: "rotate", agent: a.id}, "Replace link", true)}</span>` : a.opened && !a.expired ? "" :
       act({do: "rotate", agent: a.id}, a.expired ? "Get a new link" : "Finish setup")}
 <span class="st">${st}</span></div><details class="rm"><summary>Its link</summary><p>Replacing it
 stops the old one at once; then paste the new one into ${esc(shownName(a.name))}'s memory.</p>${
@@ -1346,11 +1353,20 @@ const NOTIFS = `
         h("span", {class: "tx"}, [h("b", {text: "The Constellation"}), ": " + (x.text || ""), h("small", {text: ago(x.at)})]),
         acts.childNodes.length ? acts : null]);
     }
-    if (x.kind === "link_client" || x.kind === "link_expired") {
+    if (x.kind === "link_client" || x.kind === "link_expired" || x.kind === "link_paused" || x.kind === "link_twice") {
       var bits = (x.text || "").split("|"), ref = (x.ref || "").split("|");
       var agentName = (bits[0] || "agent").replace(/^muse/, "Muse").replace(/^claude-code/, "Claude Code").replace(/-(\\d+)$/, " $1");
-      if (x.kind === "link_client") {
-        words = [h("b", {text: "Your " + agentName + "’s link was opened by " + (bits[1] || "another app")}),
+      if (x.kind === "link_twice") {
+        words = [h("b", {text: "Your " + agentName + "’s link may be in two agents"}),
+          ": it was checked much more often than you chose. If you didn’t set up another, replace the link."];
+        acts.appendChild(h("a", {href: "#agents", class: "ghost", text: "Replace link",
+          onclick: function(ev){ ev.preventDefault(); go("agents"); }}));
+      } else if (x.kind === "link_client" || x.kind === "link_paused") {
+        words = x.kind === "link_paused" ?
+          [h("b", {text: "Your " + agentName + "’s link was paused"}), ": " + (bits[1] || "another app") +
+            " opened it, and it is locked to " + (bits[2] || "the first app that used it") +
+            ". Nothing at the link can be seen until you allow that app or replace the link."] :
+          [h("b", {text: "Your " + agentName + "’s link was opened by " + (bits[1] || "another app")}),
           ". It is locked to " + (bits[2] || "the first app that used it") + ". If that wasn’t you, replace the link."];
         acts.appendChild(h("button", {type: "button", text: "Allow it", onclick: function(e){
           e.target.disabled = true;

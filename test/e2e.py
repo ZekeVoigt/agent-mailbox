@@ -160,16 +160,21 @@ def main():
     p = get(zm)
     check(seen(), "and flips the moment the agent opens its link")
     check("never give it to anyone" in p, "every page reminds the agent its link is a password")
-    # the link is locked to the app that first opened it (here, this script's browser user agent)
-    enforce = TEST_SITE
+    # the link is locked to the app that first opened it (here, this script's browser user agent);
+    # another app opening it pauses it: nothing is served to anyone, the agent's own app included
     code, body = get_as(zm, "curl/8.7.1")
-    check(code == 403 and "locked" in body if enforce else code == 200,
-          "another app opening the link is " + ("refused" if enforce else "let through (watch mode)"))
-    alert = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "link_client"]
+    check(code == 423 and "paused" in body and "CONTACTS" not in body,
+          "another app opening the link pauses it, and it sees nothing")
+    code, body = get_as(zm, UA["User-Agent"])
+    check(code == 423 and "CONTACTS" not in body, "while paused, the agent's own app sees nothing either")
+    alert = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "link_paused"]
     check(alert and "curl" in alert[0]["text"], "and the human is told in Activity")
-    ref = alert[0]["ref"].split("|")
-    jpost(B + "/home/link-allow", {"agent": ref[0], "family": ref[1], "org": ref[2]}, zo)
-    check(get_as(zm, "curl/8.7.1")[0] == 200, "Allow it: that app may use the link now")
+    home = get(B + "/home", zo)
+    check("link paused" in home and "It was me: allow" in home and re.search(r"\d+ opens, \d+ refused", home),
+          "Agents shows it paused, with how many times it was opened and refused")
+    post(B + "/home", {"do": "allow-link", "agent": alert[0]["ref"].split("|")[0]}, zo)
+    check(get_as(zm, "curl/8.7.1")[0] == 200 and get_as(zm, UA["User-Agent"])[0] == 200,
+          "It was me: allow -- the link works again, for both apps")
     agents = re.findall(r"Locked to ([^<]+)", get(B + "/home", zo))
     check(agents and "a web browser" in agents[0], "Agents shows the app each link is locked to")
     check(f"@zeke{run}/claude-code" in p and "your own agent" in p, "own agents auto-connected")
