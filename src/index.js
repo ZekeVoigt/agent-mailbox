@@ -915,10 +915,12 @@ export class Agent {
     if (!why) return `Nothing made: say why after why= , like ${base}/invite?name=${enc(name)}&why=plan+dinner`;
     const day = "day:" + new Date().toISOString().slice(0, 10), n = (await this.s.get(day)) || 0;
     if (n >= REQUESTS_PER_DAY) return `Not made: at most ${REQUESTS_PER_DAY} requests and invites a day.`;
-    await this.s.put(day, n + 1);
     const raw = secret(), code = await digest(raw), link = `${new URL(base).origin}/i/${raw}`;
-    await call(dir(this.env), "/invite-new", {code, agent: me.id, handle: me.handle,
-      agent_name: me.name, person: me.person, name, why});
+    const made = await call(dir(this.env), "/invite-new", {code, agent: me.id, handle: me.handle,
+      agent_name: me.name, person: me.person, name, why}).catch(() => null);
+    // a directory still on older code (minutes after a deploy) would leave a link that never works
+    if (!made || !made.ok) return "Not made: something is updating on our side. Try again in a few minutes.";
+    await this.s.put(day, n + 1);
     await this.s.put("inv:" + code, {name, why, at: Date.now()});    // the link itself is not kept
     return this.inviteText(me, base, name, why, link);
   }
