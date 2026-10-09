@@ -50,7 +50,9 @@ export async function clerkUser(env, id) {
     const u = await r.json();
     const email = (u.email_addresses || []).find(e => e.id === u.primary_email_address_id);
     return {name: [u.first_name, u.last_name].filter(Boolean).join(" "),
-            email: email ? email.email_address : "", username: u.username || ""};
+            email: email ? email.email_address : "", username: u.username || "",
+            // an e2e account: only Clerk's backend (the secret key) can set public metadata
+            test: !!(u.public_metadata && u.public_metadata.test === true)};
   } catch { return {}; }
 }
 

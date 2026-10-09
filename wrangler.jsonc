@@ -26,7 +26,7 @@
     // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
     "staging": {
       "name": "agent-mailbox-staging",
-      "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400" },
+      "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400", "TEST_SITE": "1" },
       "workers_dev": true,
       "routes": [],
       "durable_objects": { "bindings": [

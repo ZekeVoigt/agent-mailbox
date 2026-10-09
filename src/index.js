@@ -22,7 +22,13 @@ import {verifyClerk, clerkUser, revokeClerkSessions} from "./auth.js";
 
 const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
-const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
+// requests and invites are counted per PERSON (all their agents together), in the directory, one
+// atomic check-and-record: REQUESTS_PER_DAY in any 24 hours, NEW_ACCOUNT_REQUESTS in an account's
+// first day, REQUESTS_PER_PAIR to one person in PAIR_WINDOW; a human's decline silences the asker's
+// person for QUIET_AFTER_DECLINE across all their agents. MAX_AGENTS a person; SIGNUPS_PER_IP
+// accounts an IP a day (an e2e account, marked by Clerk's backend, is not counted)
+const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3, NEW_ACCOUNT_REQUESTS = 5, MAX_AGENTS = 6,
+  SIGNUPS_PER_IP = 5;
 const INVITE_LIFE = 30 * 86400e3, MAX_INVITEE = 60;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
@@ -163,12 +169,17 @@ export class Directory {
       CREATE TABLE IF NOT EXISTS invite (code TEXT PRIMARY KEY, agent TEXT, handle TEXT,
         agent_name TEXT, person TEXT, name TEXT, why TEXT, at INTEGER, claimed_by TEXT,
         done INTEGER DEFAULT 0);
-      CREATE INDEX IF NOT EXISTS invite_claimed ON invite (claimed_by, done);`);
+      CREATE INDEX IF NOT EXISTS invite_claimed ON invite (claimed_by, done);
+      CREATE TABLE IF NOT EXISTS asks (sender TEXT, target TEXT, kind TEXT, at INTEGER);
+      CREATE INDEX IF NOT EXISTS asks_sender ON asks (sender, at);
+      CREATE TABLE IF NOT EXISTS silence (target TEXT, sender TEXT, until INTEGER,
+        PRIMARY KEY (target, sender));`);
     try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN status TEXT DEFAULT ''"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN private INTEGER DEFAULT 0"); } catch {}
     try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN links TEXT DEFAULT '[]'"); } catch {}
+    try { this.sql.exec("ALTER TABLE person ADD COLUMN test INTEGER DEFAULT 0"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -245,9 +256,40 @@ export class Directory {
       if (this.one("SELECT 1 FROM person WHERE clerk = ?", b.clerk)) return json({ok: true});
       if (this.one("SELECT 1 FROM person WHERE handle = ?", b.handle))
         return json({error: `@${b.handle} is taken: try another.`, field: "handle"}, 409);
+      this.sql.exec("DELETE FROM signup WHERE at < ?", now - 86400e3);
+      if (!b.test && this.one("SELECT count(*) n FROM signup WHERE ip = ?", b.ip || "").n >= (b.most || SIGNUPS_PER_IP))
+        return json({error: "Too many new accounts from your network today: try again tomorrow."}, 429);
       this.sql.exec("INSERT INTO person (handle, name, bio, owner, findable, primary_agent, at, " +
-        "clerk) VALUES (?, ?, '', ?, 1, NULL, ?, ?)", b.handle, b.name, "clerk:" + b.clerk, now,
-        b.clerk);
+        "clerk, test) VALUES (?, ?, '', ?, 1, NULL, ?, ?, ?)", b.handle, b.name, "clerk:" + b.clerk, now,
+        b.clerk, b.test ? 1 : 0);
+      if (!b.test) this.sql.exec("INSERT INTO signup VALUES (?, ?)", b.ip || "", now);
+      return json({ok: true});
+    }
+    // one request or invite from a person, checked and recorded at once: {ok} | {silent} | {error}
+    if (p === "/ask") {
+      const me = this.one("SELECT at FROM person WHERE handle = ?", b.sender);
+      if (!me) return json({error: "Not sent: your account is gone."});
+      this.sql.exec("DELETE FROM asks WHERE at < ?", now - PAIR_WINDOW);
+      this.sql.exec("DELETE FROM silence WHERE until < ?", now);
+      if (b.target && this.one("SELECT 1 FROM silence WHERE target = ? AND sender = ?", b.target, b.sender))
+        return json({silent: true});
+      const day = this.one("SELECT count(*) n FROM asks WHERE sender = ? AND at > ?", b.sender, now - 86400e3).n;
+      const fresh = now - me.at < 86400e3, most = fresh ? NEW_ACCOUNT_REQUESTS : REQUESTS_PER_DAY;
+      if (day >= most) return json({error: `Not sent: at most ${most} requests and invites a day` +
+        (fresh ? " in an account's first day." : ".")});
+      if (b.target && this.one("SELECT count(*) n FROM asks WHERE sender = ? AND target = ?", b.sender,
+          b.target).n >= REQUESTS_PER_PAIR)
+        return json({error: `Not sent: at most ${REQUESTS_PER_PAIR} requests to the same person in 30 days.`});
+      this.sql.exec("INSERT INTO asks VALUES (?, ?, ?, ?)", b.sender, b.target || "", b.kind, now);
+      return json({ok: true});
+    }
+    if (p === "/silence") {           // a human declined: that person is not heard for 30 days
+      this.sql.exec("INSERT OR REPLACE INTO silence VALUES (?, ?, ?)", b.target, b.sender, now + QUIET_AFTER_DECLINE);
+      return json({ok: true});
+    }
+    if (p === "/test-reset-signups") { this.sql.exec("DELETE FROM signup"); return json({ok: true}); }
+    if (p === "/test-age-person") {   // the operator's, on a test site: an account as if made days ago
+      this.sql.exec("UPDATE person SET at = ? WHERE handle = ?", now - 3 * 86400e3, b.handle);
       return json({ok: true});
     }
     if (p === "/by-link") return json(this.one(
@@ -296,6 +338,7 @@ export class Directory {
       this.sql.exec("DELETE FROM invite WHERE handle = ? OR claimed_by = ?", b.handle, b.handle);
       this.sql.exec("DELETE FROM photo WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM agent WHERE handle = ?", b.handle);
+      this.sql.exec("DELETE FROM silence WHERE target = ?", b.handle);
       this.sql.exec("DELETE FROM person WHERE handle = ?", b.handle);
       return json({deleted: person ? 1 : 0});
     }
@@ -568,6 +611,7 @@ export class Directory {
         this.sql.exec("DELETE FROM invite WHERE handle = ? OR claimed_by = ?", person.handle, person.handle);
         this.sql.exec("DELETE FROM photo WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM agent WHERE handle = ?", person.handle);
+        this.sql.exec("DELETE FROM silence WHERE target = ?", person.handle);
         this.sql.exec("DELETE FROM person WHERE handle = ?", person.handle);
       }
       this.forget(b.clerk);
@@ -591,8 +635,7 @@ export class Directory {
 // peer:<agentId> {id, handle, name, person, state: requested|asked|connected|declined|cut,
 //   why, at, own}; m:<agentId>:<at>:<msgId> {id, from: "me"|"them", text, at, read}, one key per
 //   message so no value outgrows Durable Object storage's 128 KiB, at most KEEP per conversation;
-//   n:<agentId> how many; sent:<agentId> [timestamps of requests]; day:<yyyy-mm-dd> requests today
-//   (invites count too); inv:<code digest> {name, why, at, handle?, news?} an invite it made
+//   n:<agentId> how many; inv:<code digest> {name, why, at, handle?, news?} an invite it made
 // (msgs:<agentId>, a whole conversation in one value, is the old shape: moved on first touch)
 
 export class Agent {
@@ -820,7 +863,7 @@ export class Agent {
         "To ask one of them to connect, open:",
         `  ${base}/reach?to=@HANDLE&why=WHY+YOU+WANT+TO+TALK`].join("\n"));
     }
-    if (p === "/reach") return text(await this.reach(me, base, b.to, b.why));
+    if (p === "/reach") return text(await this.reach(me, base, b.to, b.why, b.via !== "link" && b.invited === true));
     if (p === "/invite") return text(await this.invite(me, base, b.name, b.why));
     if (p === "/accept") return text("Only your human can allow a request to connect, on their " +
       `dashboard: ${new URL(base).origin}/home . Tell them who asked and why; nothing changed.`, 403);
@@ -937,7 +980,7 @@ export class Agent {
     return L.join("\n");
   }
 
-  async reach(me, base, to, why) {
+  async reach(me, base, to, why, invited = false) {
     const t = parseTo(to);
     if (!t) return `Nothing sent: "to" is an @handle, like ${base}/reach?to=@sam&why=dinner`;
     why = clean(why, MAX_WHY);
@@ -952,13 +995,17 @@ export class Agent {
     if (peer && peer.state === "asked")
       return `${addr(them.handle, them.name)} already asked you. Your human can allow it on their dashboard.`;
     const own = them.handle === me.handle;
-    if (!own) {
-      const day = "day:" + new Date().toISOString().slice(0, 10), n = (await this.s.get(day)) || 0;
-      if (n >= REQUESTS_PER_DAY) return `Not sent: at most ${REQUESTS_PER_DAY} requests a day.`;
-      const sent = ((await this.s.get("sent:" + them.id)) || []).filter(x => Date.now() - x < PAIR_WINDOW);
-      if (sent.length >= REQUESTS_PER_PAIR) return `Not sent: at most ${REQUESTS_PER_PAIR} requests to the same person in 30 days.`;
-      await this.s.put(day, n + 1);
-      await this.s.put("sent:" + them.id, [...sent, Date.now()]);
+    const asked = `Asked ${addr(them.handle, them.name)} (${said(them.person)}) to connect: ${said(why)}. ` +
+      `Their human decides. When they accept, it shows on your page: ${base}`;
+    // asked already and still waiting: opening the same link again (a retry, a preview) is not another request
+    if (!own && peer && peer.state === "requested") return asked;
+    if (!own && !invited) {
+      const ok = await call(dir(this.env), "/ask", {sender: me.handle, target: them.handle, kind: "request"});
+      if (ok.error) return ok.error;
+      if (ok.silent) {                  // declined by their human: the asker is not told
+        await this.s.put("peer:" + them.id, {...them, state: "requested", why, at: Date.now(), own});
+        return asked;
+      }
     }
     const got = await call(agentObj(this.env, them.id), "/in/request", {from: {id: me.id,
       handle: me.handle, name: me.name, person: me.person}, why, own});
@@ -967,8 +1014,7 @@ export class Agent {
     await this.s.put("peer:" + them.id, {...them, state, why, at: Date.now(), own});
     if (state === "connected")
       return `Connected with ${addr(them.handle, them.name)}. Message them: ${base}/say?to=${enc("@" + them.handle + "/" + them.name)}&text=YOUR+MESSAGE`;
-    return `Asked ${addr(them.handle, them.name)} (${said(them.person)}) to connect: ${said(why)}. ` +
-      `Their human decides. When they accept, it shows on your page: ${base}`;
+    return asked;
   }
 
   // someone not here yet: an invite link for this agent to send them itself (text, email, chat);
@@ -978,14 +1024,14 @@ export class Agent {
     why = clean(why, MAX_WHY);
     if (!name) return `Nothing made: say who, like ${base}/invite?name=Sam&why=plan+dinner`;
     if (!why) return `Nothing made: say why after why= , like ${base}/invite?name=${enc(name)}&why=plan+dinner`;
-    const day = "day:" + new Date().toISOString().slice(0, 10), n = (await this.s.get(day)) || 0;
-    if (n >= REQUESTS_PER_DAY) return `Not made: at most ${REQUESTS_PER_DAY} requests and invites a day.`;
+    const ok = await call(dir(this.env), "/ask", {sender: me.handle, target: "", kind: "invite"}).catch(() => null);
+    if (!ok || (!ok.ok && !ok.error)) return "Not made: something is updating on our side. Try again in a few minutes.";
+    if (ok.error) return ok.error.replace("Not sent", "Not made");
     const raw = secret(), code = await digest(raw), link = `${new URL(base).origin}/i/${raw}`;
     const made = await call(dir(this.env), "/invite-new", {code, agent: me.id, handle: me.handle,
       agent_name: me.name, person: me.person, name, why}).catch(() => null);
     // a directory still on older code (minutes after a deploy) would leave a link that never works
     if (!made || !made.ok) return "Not made: something is updating on our side. Try again in a few minutes.";
-    await this.s.put(day, n + 1);
     await this.s.put("inv:" + code, {name, why, at: Date.now()});    // the link itself is not kept
     return this.inviteText(me, base, name, why, link);
   }
@@ -1005,6 +1051,7 @@ export class Agent {
     if (!peer || peer.state !== "asked") return "No such request waiting." + (base ? " Open your page: " + base : "");
     await this.s.put("peer:" + id, {...peer, state: yes ? "connected" : "declined", at: Date.now()});
     if (yes) await call(agentObj(this.env, id), "/in/answer", {from: {id: me.id}, yes: true});
+    else if (!peer.own) await call(dir(this.env), "/silence", {target: me.handle, sender: peer.handle});
     return yes ? `Connected with ${addr(peer.handle, peer.name)}.`
       : `Declined. ${addr(peer.handle, peer.name)} is not told, and cannot ask again for 30 days.`;
   }
@@ -1096,8 +1143,8 @@ async function deliverInvites(env, person) {
   if (!Array.isArray(list)) return;
   for (const x of list) {
     try {
-      await agentObj(env, x.agent).fetch("https://do/reach", {method: "POST", body:
-        JSON.stringify({to: "@" + person.handle, why: x.why, base: "https://do"})});
+      await agentObj(env, x.agent).fetch("https://do/reach", {method: "POST", body:   // counted when made
+        JSON.stringify({to: "@" + person.handle, why: x.why, base: "https://do", invited: true})});
       await call(agentObj(env, x.agent), "/in/joined", {code: x.code, handle: person.handle});
       await call(dir(env), "/invite-done", {code: x.code});
     } catch (e) { console.error(JSON.stringify({at: "invite", error: String(e && e.message || e)})); }
@@ -1187,7 +1234,9 @@ async function postHome(req, env, url) {
     if (!name) return onboardPage({name, handle}, "Add your name.", "name");
     if (!HANDLE_RE.test(handle))
       return onboardPage({name, handle}, "3 to 30 lowercase letters, digits or dashes.", "handle");
-    const got = await call(dir(env), "/join", {clerk: ses.clerk, handle, name});
+    const u = await clerkUser(env, ses.clerk);
+    const got = await call(dir(env), "/join", {clerk: ses.clerk, handle, name, ip: who(req).ip, test: !!u.test,
+      most: Number(env.SIGNUPS_PER_IP) || undefined});
     if (got.error) return onboardPage({name, handle}, got.error, got.field || "");
     await log(`Created @${handle}`);
     return back("add");
@@ -1218,7 +1267,10 @@ async function postHome(req, env, url) {
       return home(env, person, ses, "<p>Choose whether your agent may send without asking, and how " +
         "often it checks. Nothing was added.</p>", "add");
     const names = new Set(person.agents.map(a => a.name)), made = [];
-    for (const t of [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a))) {
+    const picked = [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a));
+    if (person.agents.length + picked.length > MAX_AGENTS)
+      return home(env, person, ses, `<p>At most ${MAX_AGENTS} agents: remove one first. Nothing was added.</p>`, "add");
+    for (const t of picked) {
       let n = t, k = 2;
       while (names.has(n)) n = `${t}-${k++}`;
       names.add(n);
@@ -1515,7 +1567,8 @@ async function route(req, env) {
     const base = `${url.origin}/a/${parts[1]}`, verb = parts[2] || "page";
     if (!["page", "find", "reach", "invite", "accept", "decline", "say", "cut"].includes(verb))
       return text("Unknown address. Open your page: " + base, 404);
-    let body = {...q, base, via: "link", client: clientOf(req)};
+    const body = {base, via: "link", client: clientOf(req)};
+    for (const k of ["to", "why", "text", "q", "name", "wait"]) if (typeof q[k] === "string") body[k] = q[k];
     if (req.method === "POST" && verb === "say" && !q.text) body.text = await req.text();
     return agentObj(env, ag.id).fetch("https://do/" + verb, {method: "POST", body: JSON.stringify(body)});
   }
@@ -1550,6 +1603,9 @@ async function route(req, env) {
       const ref = /^https:\/\/(ai-andromeda\.com|agents\.ai-andromeda\.com)\//.test(b.link || "") ? b.link : "";
       return json(await call(dir(env), "/notice-all", {text: clean(b.text, 300), ref}));
     }
+    if (parts[1] === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
+    if (parts[1] === "age-person" && env.TEST_SITE === "1" && HANDLE_RE.test(b.handle || ""))
+      return json(await call(dir(env), "/test-age-person", {handle: b.handle}));
     if (parts[1] === "age-link" && HANDLE_RE.test(b.handle || "")) {
       const a = (await call(dir(env), "/agents-of", {handle: b.handle})).find(x => x.id === b.id);
       if (!a) return text("No such agent.", 404);
