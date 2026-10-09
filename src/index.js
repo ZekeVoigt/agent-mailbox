@@ -14,7 +14,7 @@
 // requests, presence). HTTPS throughout, storage encrypted at rest by Cloudflare; this is NOT
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
-import {TILES, prefsOf, SEND, EVERY, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
+import {TILES, prefsOf, SEND, EVERY, OFFER, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
   errorPage, invitePage} from "./ui.js";
 import {verifyClerk, clerkUser, revokeClerkSessions} from "./auth.js";
 
@@ -1170,7 +1170,7 @@ async function postHome(req, env, url) {
   }
   if (f.do === "add") {
     // the person's own choices, never a default made for them
-    if (!SEND[f.send] || !EVERY[f.every])
+    if (!SEND[f.send] || !OFFER.includes(f.every))
       return home(env, person, ses, "<p>Choose whether your agent may send without asking, and how " +
         "often it checks. Nothing was added.</p>", "add");
     const names = new Set(person.agents.map(a => a.name)), made = [];

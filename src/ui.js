@@ -174,6 +174,10 @@ fieldset.choice label{align-items:flex-start;padding:12px 14px;font-size:14px}
 fieldset.choice b{display:block;font-weight:500}
 fieldset.choice.every{grid-template-columns:repeat(3,1fr)}
 fieldset.choice.every label{justify-content:center;padding:10px 8px;font-size:13.5px;text-align:center}
+fieldset.choice.every label span{display:flex;flex-direction:column;align-items:center;gap:3px}
+.choice em.rec{display:inline-block;margin:0 0 0 8px;padding:1px 7px;font-size:10.5px;font-style:normal;
+font-weight:600;letter-spacing:.02em;color:#0a0a0a;background:#4ade80;border-radius:999px;vertical-align:1px}
+fieldset.choice.every em.rec{margin:0}
 .setup .hint{margin:-4px 0 0;font-size:12.5px;color:var(--dim)}
 .setup button.getmsg{width:auto;margin:0 0 0 44px;padding:11px 22px;font-size:14px}
 .setup button.getmsg:disabled{opacity:.4;cursor:not-allowed}
@@ -532,9 +536,15 @@ export const SEND = {
 };
 export const EVERY = {
   "1m": ["1 min", "every minute", "1m"], "5m": ["5 min", "every 5 minutes", "5m"],
+  "15m": ["15 min", "every 15 minutes", "15m"], "1h": ["1 hour", "every hour", "1h"],
+  "4h": ["4 hours", "every 4 hours", "4h"], "1d": ["Once a day", "once a day", "1d"],
+  // offered before; agents set up with them keep them
   "10m": ["10 min", "every 10 minutes", "10m"], "30m": ["30 min", "every 30 minutes", "30m"],
-  "1h": ["1 hour", "every hour", "1h"], "1d": ["Once a day", "once a day", "1d"],
 };
+// what Add offers, evenly spread from fast to slow (each about 3 to 6 times the last), and what we
+// recommend: asking first, and a check every minute or five
+export const OFFER = ["1m", "5m", "15m", "1h", "4h", "1d"];
+export const RECOMMENDED = new Set(["ask", "1m", "5m"]);
 export const prefsOf = p => ({send: SEND[p && p.send] ? p.send : "ask", every: EVERY[p && p.every] ? p.every : "5m"});
 export const prefsLine = p => { p = prefsOf(p);
   return `checks ${EVERY[p.every][1]} · ${p.send === "auto" ? "sends on its own" : "asks before sending"}`; };
@@ -575,12 +585,13 @@ You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human ca
 // 1. pick  2. choose how it works (no link is made until then)  3. paste the one message
 // 4. it opens its link: done.
 
+const rec = k => RECOMMENDED.has(k) ? '<em class="rec">Recommended</em>' : "";
 const choices = () => `<fieldset class="choice"><legend>Can it send messages without asking you?</legend>${
   Object.entries(SEND).map(([k, [t, d]]) => `<label><input type="radio" name="send" value="${k}" required>` +
-    `<span><b>${esc(t)}</b><small>${esc(d)}</small></span></label>`).join("")}</fieldset>
+    `<span><b>${esc(t)}${rec(k)}</b><small>${esc(d)}</small></span></label>`).join("")}</fieldset>
 <fieldset class="choice every"><legend>How often should it check for new messages?</legend>${
-  Object.entries(EVERY).map(([k, [t]]) => `<label><input type="radio" name="every" value="${k}" required>` +
-    `<span>${esc(t)}</span></label>`).join("")}</fieldset>
+  OFFER.map(k => `<label><input type="radio" name="every" value="${k}" required>` +
+    `<span>${esc(EVERY[k][0])}${rec(k)}</span></label>`).join("")}</fieldset>
 <p class="hint">You can change both any time by asking your agent.</p>`;
 
 const pickAgent = () => `<form method="post" action="/home" class="setup">${hidden({do: "add"})}

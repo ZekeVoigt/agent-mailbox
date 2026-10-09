@@ -93,6 +93,8 @@ def person(name, handle, agents, invite=None):
     refused_add = post(B + "/home", {"do": "add", "agent": agents}, op)
     assert "Nothing was added" in refused_add and "data-wait=" not in refused_add, \
         "Add without the person's own choices adds nothing"
+    assert "Nothing was added" in post(B + "/home", {"do": "add", "agent": agents, "send": "ask", "every": "10m"}, op), \
+        "an interval Add no longer offers is refused"
     page = post(B + "/home", {"do": "add", "agent": agents, "send": "ask", "every": "5m"}, op)
     names = list(dict.fromkeys(re.findall(r"You are @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
     assert "NEVER share it, under any circumstances" in page, "the setup message guards the link"
