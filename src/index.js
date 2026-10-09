@@ -24,7 +24,7 @@ const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
 const INVITE_LIFE = 30 * 86400e3, MAX_INVITEE = 60;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
-  MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100;
+  MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100, MAX_LINKS = 5;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -55,6 +55,23 @@ async function sameSecret(a, b) {     // constant time, on digests so the length
   for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
   return diff === 0;
 }
+// a profile's pinned links: http(s) addresses only, at most MAX_LINKS, each at most 200 characters
+function linksOf(xs) {
+  const out = [];
+  for (const raw of (Array.isArray(xs) ? xs : []).slice(0, 20)) {
+    let s = String(raw || "").trim();
+    if (!s) continue;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = "https://" + s;
+    let u = null;
+    try { u = new URL(s); } catch {}
+    if (!u || !["http:", "https:"].includes(u.protocol) || !u.hostname.includes(".") || u.username ||
+        u.password || u.toString().length > 200)
+      return {error: `“${String(raw).slice(0, 40)}” isn't a web address.`};
+    out.push(u.toString());
+  }
+  return out.length > MAX_LINKS ? {error: `At most ${MAX_LINKS} links.`} : {links: out};
+}
+
 const clean = (s, most) => String(s || "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
   .trim().slice(0, most);
 function ago(ms) {
@@ -137,6 +154,7 @@ export class Directory {
     try { this.sql.exec("ALTER TABLE person ADD COLUMN status TEXT DEFAULT ''"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN private INTEGER DEFAULT 0"); } catch {}
     try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
+    try { this.sql.exec("ALTER TABLE person ADD COLUMN links TEXT DEFAULT '[]'"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -296,6 +314,10 @@ export class Directory {
       return json({ok: true});
     }
     if (p === "/list") return json(this.all("SELECT handle, name, at, clerk FROM person ORDER BY at"));
+    if (p === "/links-set") {
+      this.sql.exec("UPDATE person SET links = ? WHERE handle = ?", JSON.stringify(b.links || []), b.handle);
+      return json({ok: true});
+    }
     if (p === "/profile") {
       this.sql.exec("UPDATE person SET name = ?, bio = ?, findable = ? WHERE handle = ?",
         b.name, b.bio, b.findable ? 1 : 0, b.handle);
@@ -374,11 +396,12 @@ export class Directory {
         q, `${q}%`, `${q}%`, `% ${q}%`, q, `${q}%`, `${q}%`));
     }
     if (p === "/board") {
-      const x = this.one("SELECT p.handle, p.name, p.bio, p.status, p.private, f.at photo FROM person p " +
-        "LEFT JOIN photo f USING (handle) WHERE p.handle = ?", b.handle);
+      const x = this.one("SELECT p.handle, p.name, p.bio, p.status, p.private, p.links, f.at photo FROM " +
+        "person p LEFT JOIN photo f USING (handle) WHERE p.handle = ?", b.handle);
       if (!x) return json(null);
       const see = this.canSee(b.viewer, b.handle);
       x.private = !!x.private;
+      try { x.links = JSON.parse(x.links || "[]"); } catch { x.links = []; }
       x.can_see = see;
       x.agents = this.all("SELECT name FROM agent WHERE handle = ? ORDER BY at", b.handle).map(a => a.name);
       x.followers = this.one("SELECT count(*) n FROM follow WHERE followee = ? AND state = 'on'", b.handle).n;
@@ -1131,6 +1154,18 @@ async function postHome(req, env, url) {
     await log("Changed the profile");
     return back("profile");
   }
+  if (f.do === "privacy") {           // Settings: who sees your posts, who finds you by name
+    const priv = f.private === "1", find = f.findable === "1";
+    if (!!person.findable !== find) {
+      await call(dir(env), "/profile", {handle: person.handle, name: person.name, bio: person.bio, findable: find});
+      await log(find ? "Let people find me by name" : "Stopped people finding me by name");
+    }
+    if (!!person.private !== priv) {
+      await call(dir(env), "/privacy", {handle: person.handle, private: priv});
+      await log(priv ? "Made the account private" : "Made the account public");
+    }
+    return back("settings");
+  }
   if (f.do === "add") {
     const names = new Set(person.agents.map(a => a.name)), made = [];
     for (const t of [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a))) {
@@ -1155,7 +1190,7 @@ async function postHome(req, env, url) {
   if (f.do === "end-session") {
     await call(dir(env), "/session-end-one", {clerk: ses.clerk, sid: String(f.sid || "")});
     await log("Signed out a device");
-    return back("profile");
+    return back("settings");
   }
   if (f.do === "end-all") {
     await call(dir(env), "/session-end-all", {clerk: ses.clerk});
@@ -1167,7 +1202,7 @@ async function postHome(req, env, url) {
   }
   if (f.do === "delete-account") {
     if (String(f.confirm || "").trim().replace(/^@/, "").toLowerCase() !== person.handle)
-      return home(env, person, ses, `<p>Type @${person.handle} to delete the account.</p>`, "profile");
+      return home(env, person, ses, `<p>Type @${person.handle} to delete the account.</p>`, "settings");
     for (const a of person.agents) await wipeAgent(env, a.id);
     await call(dir(env), "/delete-me", {clerk: ses.clerk});
     await revokeClerkSessions(env, ses.clerk);
@@ -1181,7 +1216,7 @@ async function postHome(req, env, url) {
   if (f.do === "accept" || f.do === "decline") {
     await call(stub, "/owner-answer", {id: f.id, yes: f.do === "accept", base: ""});
     await log(`${f.do === "accept" ? "Allowed" : "Declined"} a request to ${a.name}`);
-    return back(f.do === "accept" ? "connections" : "requests");
+    return back(f.do === "accept" ? "connections" : "activity");
   }
   if (f.do === "cut") {
     await call(stub, "/owner-cut", {to: f.to});
@@ -1257,7 +1292,7 @@ async function canvasRoute(req, env, url) {
         else if (y.state === "asked" && link === "none") link = "asks-you";
       }
     }
-    return json({...card(x), bio: x.bio || "", agents: x.agents, followers: x.followers,
+    return json({...card(x), bio: x.bio || "", links: x.links || [], agents: x.agents, followers: x.followers,
       following: x.following, posts_n: x.posts_n, posts: x.posts.map(postOut), you_follow: x.you_follow,
       follow_state: x.follow_state, can_see: x.can_see, requests: x.requests,
       follows_you: x.follows_you, self: h === person.handle, link,
@@ -1293,6 +1328,8 @@ async function canvasRoute(req, env, url) {
   let f;
   try { f = JSON.parse(raw); } catch { return json({error: "That did not arrive whole."}, 400); }
   if (p === "/home/profile") {
+    const ln = "links" in f ? linksOf(f.links) : null;
+    if (ln && ln.error) return json({error: ln.error}, 400);
     if (f.photo) {
       const data = String(f.photo).replace(/^data:image\/jpeg;base64,/, "");
       let bytes;
@@ -1306,6 +1343,7 @@ async function canvasRoute(req, env, url) {
       name: "name" in f ? clean(f.name, 60) || person.name : person.name,
       bio: "bio" in f ? clean(f.bio, 280) : person.bio,
       findable: typeof f.findable_by_name === "boolean" ? f.findable_by_name : !!person.findable});
+    if (ln) await call(dir(env), "/links-set", {handle: person.handle, links: ln.links});
     await audit(env, req, ses.clerk, f.photo ? "Changed the profile and photo" : "Changed the profile");
     return json({ok: true});
   }

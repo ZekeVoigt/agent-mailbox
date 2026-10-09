@@ -371,7 +371,7 @@ def main():
     zo2 = session(zid)
     prof = get(B + "/home", zo)
     check("Signed in" in prof and "Security activity" in prof and prof.count("this browser") == 1,
-          "Profile lists sign-ins and the security log")
+          "Settings lists sign-ins and the security log")
     post(B + "/home", {"do": "end-all"}, zo2)
     check("id=\"cf\"" in get(B + "/home", zo) and "id=\"cf\"" in get(B + "/home", zo2),
           "sign out everywhere ends every browser's session")

@@ -1,6 +1,6 @@
 // The Constellation's pages for people, in the relay's own look (look.js): the night sky, one
-// card, and, signed in, the rail of views -- Requests, Connections, Agents, Add an agent,
-// Profile. The agents themselves never see these pages: they read plain text at their own links.
+// card, and, signed in, the rail of views -- Connections, Activity (requests to connect first),
+// Agents, Add an agent -- with your Profile and Settings at its foot. The agents themselves never see these pages: they read plain text at their own links.
 
 import {STYLE, SKY, CREDIT, SCRIPT, ICONS, MARKS} from "./look.js";
 import {CLERK_FAPI, CLERK_PK} from "./auth.js";
@@ -19,7 +19,14 @@ export const tileOf = name => TILES.find(t => name === t.id || name.startsWith(t
 export const logo = name => (MARKS[tileOf(name)?.id] || MARKS.agent);
 const shownName = name => tileOf(name)?.name || name;
 
-const ADD_ICON = ICONS.add, PROFILE_ICON = ICONS.devices;
+const ADD_ICON = ICONS.add;
+const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+  'stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 ' +
+  '1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 ' +
+  '1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 ' +
+  '0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 ' +
+  '1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 ' +
+  '2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 const BELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
   'stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>' +
   '<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
@@ -83,7 +90,7 @@ background:#1b1b1b;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.55)}
 font:inherit;font-size:13.5px;color:var(--soft);background:none;border:0;border-radius:10px}
 .sugg .opt.on{color:var(--ink);background:#262626}
 .sugg .face{width:34px;height:34px;font-size:13px}
-.sugg .face img,.bhd .face img,.ncard .who .face img{width:100%;height:100%;object-fit:cover}
+.sugg .face img,.bhd .face img,:is(.ncard,.pp,.pcard) .who .face img{width:100%;height:100%;object-fit:cover}
 .sugg span{min-width:0}
 .sugg b{display:block;font-weight:500}
 .sugg small{display:block;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -123,18 +130,18 @@ background:#1f1f1f;border-radius:999px}
 .ncard .compose .row2{display:flex;align-items:center;gap:10px}
 .ncard .compose .note{font-size:12.5px;color:#fca5a5}
 .posts .post,.feed .post{padding:10px 0;border-top:1px solid #222}
-.ncard .post p{margin:0 0 4px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
-.ncard .post small{display:flex;gap:10px;align-items:center}
-.ncard .post .del{width:auto;margin:0;padding:0;font-size:12px;color:var(--dim);background:none}
-.ncard .post .del:hover{color:#fca5a5}
+:is(.ncard,.pp,.pcard) .post p{margin:0 0 4px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+:is(.ncard,.pp,.pcard) .post small{display:flex;gap:10px;align-items:center}
+:is(.ncard,.pp,.pcard) .post .del{width:auto;margin:0;padding:0;font-size:12px;color:var(--dim);background:none}
+:is(.ncard,.pp,.pcard) .post .del:hover{color:#fca5a5}
 .ncard .feed .who{padding:0 0 4px}
-.ncard .muted{font-size:13px;color:var(--dim)}
-.ncard .backto{width:auto;margin:0 0 6px;padding:4px 0;font-size:13px;color:var(--dim);background:none}
-.ncard .backto:hover{color:var(--ink);background:none}
-.ncard .who{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:6px 4px;font:inherit;
+:is(.ncard,.pp,.pcard) .muted{font-size:13px;color:var(--dim)}
+:is(.ncard,.pp,.pcard) .backto{width:auto;margin:0 0 6px;padding:4px 0;font-size:13px;color:var(--dim);background:none}
+:is(.ncard,.pp,.pcard) .backto:hover{color:var(--ink);background:none}
+:is(.ncard,.pp,.pcard) .who{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;margin:0;padding:6px 4px;font:inherit;
 font-size:13.5px;text-align:left;color:var(--soft);background:none;border:0;border-radius:8px}
-.ncard .who:hover{color:var(--ink);background:rgba(255,255,255,.04)}
-.ncard .who .face{width:32px;height:32px;font-size:13px}
+:is(.ncard,.pp,.pcard) .who:hover{color:var(--ink);background:rgba(255,255,255,.04)}
+:is(.ncard,.pp,.pcard) .who .face{width:32px;height:32px;font-size:13px}
 .ncard details.edit{margin:14px 0 0}
 .ncard details.edit summary{cursor:pointer;font-size:12.5px;color:var(--dim)}
 .ncard details.edit[open] summary{margin-bottom:10px}
@@ -182,29 +189,29 @@ button.fin{width:auto}
 .ncard .private{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 0;text-align:center}
 .ncard .private .lock svg{width:26px;height:26px}
 .ncard .private p{margin:6px 0 0;color:var(--soft)}
-.ncard button.reqs{width:auto;margin:0 0 12px;padding:6px 14px;font-size:12.5px;color:var(--warn);background:rgba(251,191,36,.1)}
-.ncard .frq{display:flex;align-items:center;gap:6px}
-.ncard .frq .who{flex:1;min-width:0}
-.ncard .frq>button{width:auto;margin:0;padding:6px 12px;font-size:12.5px}
-.ncard .frq>button.ghost{color:var(--ink);background:#262626}
+:is(.ncard,.pp,.pcard) button.reqs{width:auto;margin:0 0 12px;padding:6px 14px;font-size:12.5px;color:var(--warn);background:rgba(251,191,36,.1)}
+:is(.ncard,.pp,.pcard) .frq{display:flex;align-items:center;gap:6px}
+:is(.ncard,.pp,.pcard) .frq .who{flex:1;min-width:0}
+:is(.ncard,.pp,.pcard) .frq>button{width:auto;margin:0;padding:6px 12px;font-size:12.5px}
+:is(.ncard,.pp,.pcard) .frq>button.ghost{color:var(--ink);background:#262626}
 .ncard label.privacy{margin:14px 2px 0}
-.ncard .pm{display:flex;align-items:center;gap:14px}
-.ncard .pm button{width:auto;margin:0;padding:0;font-size:12.5px;color:var(--dim);background:none}
-.ncard .pm button:hover{color:var(--ink);background:none}
-.ncard .pm .lk.on{color:#f472b6}
-.ncard .thread{margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid #262626}
-.ncard .thread[hidden]{display:none}
-.ncard .reply{display:flex;gap:8px;padding:6px 0}
-.ncard .reply .face{width:26px;height:26px;font-size:11px}
-.ncard .reply .face img{width:100%;height:100%;object-fit:cover}
-.ncard .reply b{font-size:13px;font-weight:500}
-.ncard .reply small{display:inline;font-size:11.5px}
-.ncard .reply p{margin:1px 0 0;font-size:13px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
-.ncard .reply .del{width:auto;margin:0;padding:0;font-size:11.5px;color:var(--dim);background:none}
-.ncard form.rf{display:flex;gap:6px;margin:6px 0 0}
-.ncard form.rf input{flex:1;min-width:0}
-.ncard form.rf button{width:auto;margin:0;padding:6px 12px;font-size:12.5px}
-.ncard .err{color:#fca5a5}
+:is(.ncard,.pp,.pcard) .pm{display:flex;align-items:center;gap:14px}
+:is(.ncard,.pp,.pcard) .pm button{width:auto;margin:0;padding:0;font-size:12.5px;color:var(--dim);background:none}
+:is(.ncard,.pp,.pcard) .pm button:hover{color:var(--ink);background:none}
+:is(.ncard,.pp,.pcard) .pm .lk.on{color:#f472b6}
+:is(.ncard,.pp,.pcard) .thread{margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid #262626}
+:is(.ncard,.pp,.pcard) .thread[hidden]{display:none}
+:is(.ncard,.pp,.pcard) .reply{display:flex;gap:8px;padding:6px 0}
+:is(.ncard,.pp,.pcard) .reply .face{width:26px;height:26px;font-size:11px}
+:is(.ncard,.pp,.pcard) .reply .face img{width:100%;height:100%;object-fit:cover}
+:is(.ncard,.pp,.pcard) .reply b{font-size:13px;font-weight:500}
+:is(.ncard,.pp,.pcard) .reply small{display:inline;font-size:11.5px}
+:is(.ncard,.pp,.pcard) .reply p{margin:1px 0 0;font-size:13px;color:var(--soft);white-space:pre-wrap;overflow-wrap:anywhere}
+:is(.ncard,.pp,.pcard) .reply .del{width:auto;margin:0;padding:0;font-size:11.5px;color:var(--dim);background:none}
+:is(.ncard,.pp,.pcard) form.rf{display:flex;gap:6px;margin:6px 0 0}
+:is(.ncard,.pp,.pcard) form.rf input{flex:1;min-width:0}
+:is(.ncard,.pp,.pcard) form.rf button{width:auto;margin:0;padding:6px 12px;font-size:12.5px}
+:is(.ncard,.pp,.pcard) .err{color:#fca5a5}
 .nav a[data-unread]{position:relative}
 .nav a[data-unread]:not([data-unread="0"]):after{content:attr(data-unread);position:absolute;left:20px;top:2px;min-width:16px;
 height:16px;padding:0 4px;font-size:10px;font-weight:600;line-height:16px;text-align:center;color:#0a0a0a;
@@ -265,6 +272,120 @@ h2 .mk{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
 h2{display:flex;align-items:center;gap:6px}
 @media (max-width:760px){.wrap.wide,.shell,.nav{min-width:0;max-width:100%}
 .nav span{display:none}.nav>div{justify-content:space-around;width:100%}.nav{justify-content:center}}
+
+/* -- Profile: your page, as people see it -------------------------------------------------- */
+.nav .me i{overflow:hidden}
+.nav .me i img{width:100%;height:100%;object-fit:cover}
+.nav .me[aria-current=page] i{box-shadow:0 0 0 2px var(--ink)}
+.ncard .toprof{margin:10px 0 0;font-size:13px}
+.ncard .toprof a{color:var(--soft)}
+.pp{max-width:880px;margin:0 auto}
+.phd{display:grid;grid-template-columns:150px minmax(0,1fr) auto;grid-template-areas:"face top acts" "face stats stats" "face about about";
+column-gap:44px;align-items:start;margin:8px 0 28px}
+.pface{grid-area:face}.ptop{grid-area:top;min-width:0}.pacts{grid-area:acts;display:flex;gap:8px;align-items:center}
+.phd .stats{grid-area:stats;margin:14px 0 12px}.pabout{grid-area:about;min-width:0}
+.phd .face.big,.phd .ph{width:150px;height:150px;font-size:54px}
+.phd .face.big img{width:100%;height:100%;object-fit:cover}
+.phd .ph{position:relative;display:block;margin:0;cursor:pointer}
+.phd .ph em{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;
+font-style:normal;color:#fff;background:rgba(0,0,0,.55);border-radius:50%;opacity:0;transition:opacity .15s}
+.phd .ph:hover em,.phd .ph.empty em{opacity:1}
+.ptop h1{display:flex;align-items:center;margin:4px 0 0;font-size:24px;font-weight:600;text-align:left;overflow-wrap:anywhere}
+.ptop small{display:block;font-size:14px;color:var(--dim)}
+.ptop .note{display:block;margin-top:4px;font-size:12px;color:#fca5a5}
+.pacts button{width:auto;margin:0;padding:8px 18px;font-size:13.5px}
+.pacts .gear{display:flex;padding:8px;color:var(--mute);border-radius:10px}
+.pacts .gear:hover{color:var(--ink);background:#262626}
+.pacts .gear svg{width:22px;height:22px}
+.phd .stats{gap:32px}
+.phd .stats .st{flex-direction:row;align-items:baseline;gap:5px;font-size:14.5px;color:var(--soft)}
+.phd .stats b{font-size:15px}
+.pabout p{margin:0 0 6px;font-size:14.5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.pabout .status{display:inline-block;padding:3px 12px;font-size:13px;color:var(--soft);background:#1f1f1f;border-radius:999px}
+.pabout .muted{color:var(--dim);font-size:13.5px}
+.pabout .agents{margin:12px 0 0}
+.plinks{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.plink{display:inline-flex;align-items:center;gap:7px;max-width:100%;padding:6px 13px 6px 10px;font-size:13.5px;
+color:var(--ink);text-decoration:none;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:999px}
+.plink:hover{background:#262626}
+.plink span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plink .li{display:flex;flex:none}
+.plink svg{width:16px;height:16px}
+.plink.linkedin .li{color:#4a9fe8}
+.pedit{display:grid;gap:12px;max-width:520px;margin:18px 0 0}
+.pedit label{display:grid;gap:4px;margin:0;font-size:12.5px;color:var(--mute)}
+.pedit fieldset{display:grid;gap:6px;margin:0;padding:0;border:0;min-width:0}
+.pedit legend{padding:0;margin:0 0 2px;font-size:12.5px;color:var(--mute)}
+.pedit fieldset small{font-size:12px;color:var(--dim)}
+.pedit .row2{display:flex;align-items:center;gap:8px}
+.pedit .row2 button{width:auto;margin:0;padding:8px 20px}
+.pedit .row2 button:first-child{color:#000;background:#fafafa}
+.pedit .note{font-size:12.5px;color:#fca5a5}
+.pp button.reqs{margin:0 0 18px}
+.pcompose{display:flex;align-items:flex-start;gap:12px;margin:0 0 22px;padding:14px;background:#141414;border-radius:14px}
+.pcompose .face{width:40px;height:40px;font-size:15px}
+.pcompose .face img{width:100%;height:100%;object-fit:cover}
+.pcompose textarea{flex:1 1 0;width:0;min-width:0;min-height:56px;margin:0;resize:vertical}
+.pcompose button{width:auto;margin:0;padding:9px 18px;color:#000;background:#fafafa}
+.pcompose .note{flex-basis:100%;font-size:12.5px;color:#fca5a5}
+.pcompose .note:empty{display:none}
+.pcompose:has(.note:not(:empty)){flex-wrap:wrap}
+.ptabs{display:flex;justify-content:center;border-top:1px solid #262626;margin:0 0 14px}
+.ptabs span{margin-top:-1px;padding:12px 4px;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;border-top:1px solid var(--ink)}
+.pgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.pgrid .tile{position:relative;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;
+aspect-ratio:1;margin:0;padding:16px;text-align:left;font-weight:400;background:#161616;border-radius:6px;overflow:hidden}
+.pgrid .tile:hover{background:#1e1e1e;transform:none}
+.pgrid .tile p{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;margin:0;overflow:hidden;
+font-size:15px;line-height:1.45;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.pgrid .tm{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--dim)}
+.pgrid .tm span{display:inline-flex;align-items:center;gap:4px}
+.pgrid .tm .on{color:#f472b6}
+.pgrid .tm .bub svg{width:13px;height:13px}
+.pgrid .tm small{margin-left:auto}
+.pempty{display:flex;flex-direction:column;align-items:center;gap:4px;padding:48px 0;text-align:center}
+.pempty b{font-size:20px;font-weight:600}.pempty small{color:var(--dim)}
+.pmodal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:24px;
+background:rgba(0,0,0,.7)}
+.pcard{position:relative;width:min(560px,100%);max-height:calc(100dvh - 48px);overflow-y:auto;padding:20px 22px;
+background:#141414;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.pcard .x{position:absolute;right:10px;top:10px;width:34px;height:34px;margin:0;padding:0;font-size:20px;color:var(--mute);background:none}
+.pcard .pby{display:flex;align-items:center;gap:10px;margin:0 40px 12px 0}
+.pcard .pby .face{width:36px;height:36px;font-size:14px}
+.pcard .pby .face img{width:100%;height:100%;object-fit:cover}
+.pcard .pby small{display:block;font-size:12.5px;color:var(--dim)}
+.pcard .post{padding:0;border:0}
+.pcard .post>p{font-size:16px;line-height:1.55;color:var(--ink)}
+.pcard .pm{margin:12px 0 0;padding:10px 0 0;border-top:1px solid #222}
+.view .sets{margin:0 0 8px}
+.view .sets label.opt{display:flex;align-items:flex-start;gap:10px;margin:0 0 12px}
+.view .sets label.opt input{margin-top:4px}
+.view .sets small{display:block;font-size:12.5px;color:var(--dim)}
+.view .sets button{width:auto;padding:8px 20px}
+@media (max-width:760px){
+.nav>div:last-child{display:flex;flex:1;width:auto;max-width:20%}
+.nav>div:last-child .set{display:none}
+.nav>div:first-child{width:auto;flex:5}
+.nav .me{margin:0}
+.nav .me i{width:24px;height:24px}
+.phd{grid-template-columns:86px minmax(0,1fr);grid-template-areas:"face top" "face stats" "about about" "acts acts";
+column-gap:20px;margin:0 0 20px}
+.phd .face.big,.phd .ph{width:86px;height:86px;font-size:32px}
+.ptop h1{font-size:19px}
+.phd .stats{gap:18px;margin:8px 0 12px}
+.phd .stats .st{flex-direction:column;gap:0;font-size:12.5px}
+.pacts{margin:12px 0 0}.pacts button{flex:1;padding:9px}
+.pgrid{gap:3px}.pgrid .tile{padding:10px;border-radius:2px}
+.pgrid .tile p{-webkit-line-clamp:4;font-size:12.5px}
+.pgrid .tm small{display:none}
+.pmodal{align-items:flex-end;padding:0}
+.pcard{width:100%;max-height:88dvh;border-radius:16px 16px 0 0;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
+}
+
+#activity .reqs-to{margin:0 0 22px;padding:16px 18px 6px;background:rgba(251,191,36,.05);border:1px solid rgba(251,191,36,.18);border-radius:14px}
+#activity .reqs-to h2{margin:0 0 4px;font-size:15px}
+#activity .reqs-to h2 .n{padding:1px 8px;font-size:11.5px;font-weight:600;color:#0a0a0a;background:var(--warn);border-radius:999px}
+#activity h2.earlier{margin:0 0 6px;font-size:15px}
 `;
 
 const copyBlock = (label, value, cls = "") => `<div class="paste"><pre class="${cls}">${
@@ -584,15 +705,7 @@ function graph(person, agents, profiles) {
   nodes.unshift(`<button type="button" class="node me" data-id="me" data-card="me">${myface}<span>` +
     `${esc(me.name) || "You"}</span></button>`);
   cards.unshift(`<aside class="ncard me" id="me" hidden>${close}<div class="bd" data-board="${
-    esc(person.handle)}"></div><details class="edit"><summary>Edit profile</summary><form class="prof"><label class="ph" ` +
-    `title="Change your photo">${myface}<input type="file" accept="image/*" hidden><em>Change photo</em>` +
-    `</label><input name="name" maxlength="60" value="${esc(me.name)}" placeholder="Your name" ` +
-    `aria-label="Your name"><small>@${esc(person.handle)}</small><textarea name="bio" maxlength="280" ` +
-    `rows="3" placeholder="A line about you: what you do, what you're into." aria-label="About you">${
-      esc(me.bio)}</textarea><label class="opt"><input type="checkbox" name="byname"${
-      me.findable ? " checked" : ""}> Let people find me by name</label><input type="hidden" ` +
-    `name="findable"><div class="save"><button>Save profile</button><span class="msg"></span></div>` +
-    `</form></details><h3>Connected · ${roster.length}</h3><div class="roster">${
+    esc(person.handle)}"></div><p class="toprof"><a href="#profile">Open your profile</a></p><h3>Connected · ${roster.length}</h3><div class="roster">${
       roster.join("") || "<p>No one yet. Find someone below.</p>"}</div></aside>`);
   cards.push(`<aside class="ncard" id="board" hidden>${close}<div class="bd"></div></aside>`);
   const find = '<form class="find" role="search" autocomplete="off"><svg viewBox="0 0 24 24" fill="none" ' +
@@ -622,7 +735,7 @@ export function homePage({person, agents, note = "", start = null, sessions = []
 to connect with your ${esc(shownName(a.name))}, about “${esc(x.why)}”<br><small>${ago(now - x.at)}</small></span>
 <span class="acts">${act({do: "accept", agent: a.id, id: x.id}, "Allow")}${
   act({do: "decline", agent: a.id, id: x.id}, "Decline", true)}</span></div>`).join("")
-    : "<p>No one is waiting.</p>";
+    : "";
 
 
   const ags = agents.map(a => {
@@ -651,11 +764,11 @@ link stops working, its contacts are cut, and its conversations are erased.</p>$
   }).join("");
 
   const add = setup || pickAgent();
-  const profile = `<form method="post" action="${self}">${hidden({do: "profile"})}
-<p><label>Your name <input name="name" maxlength="60" value="${esc(person.name)}"></label></p>
-<p><label>About you <textarea name="bio" maxlength="280" rows="3">${esc(person.bio)}</textarea></label></p>
-<label class="opt"><input type="checkbox" name="findable" value="1"${person.findable ? " checked" : ""}>
-Let people find me by name (your exact @handle always works)</label>
+  const privacy = `<h2>Privacy</h2><form method="post" action="${self}" class="sets">${hidden({do: "privacy"})}
+<label class="opt"><input type="checkbox" name="private" value="1"${person.private ? " checked" : ""}><span>Private
+account<small>Only followers you approve see your posts.</small></span></label>
+<label class="opt"><input type="checkbox" name="findable" value="1"${person.findable ? " checked" : ""}><span>Let
+people find me by name<small>Your exact @handle always works.</small></span></label>
 <button>Save</button></form>`;
   const devices = `<h2>Signed in</h2><div class="rows">${sessions.map(x => `<div class="row"><span
 class="why">${esc(device(x.ua))}${x.sid === current ? " <small>· this browser</small>" : ""}<br><small>${
@@ -666,7 +779,7 @@ ${act({do: "end-all"}, "Sign out everywhere", true)}`;
   const activity = `<h2>Security activity</h2><div class="rows">${log.length ? log.map(x =>
     `<div class="row"><span class="why">${esc(x.what)}<br><small>${when(x.at)} · ${esc(x.ip || "")} · ${
     esc(device(x.ua))}</small></span></div>`).join("") : "<p>Nothing yet.</p>"}</div>`;
-  const danger = `<details class="rm"><summary>Delete my account</summary><p>Erases @${
+  const danger = `<h2>Account</h2><details class="rm"><summary>Delete my account</summary><p>Erases @${
     esc(person.handle)}, every agent's link and conversations on this side, your sign-ins and this
 activity. People you talked with keep their own copy of what was said, as with email. Type
 @${esc(person.handle)} to confirm.</p><form method="post" action="${self}">${hidden({do: "delete-account"})}
@@ -674,30 +787,35 @@ activity. People you talked with keep their own copy of what was said, as with e
 <button class="ghost">Delete my account</button></form></details>`;
 
   const views = [
-    ["requests", "Requests", "People whose agents asked to connect with yours. Only you can " +
-      "allow one; your agents can't. Decline and nothing is sent; they cannot ask again for 30 days.",
-      `<div class="rows">${requests}</div>`, ICONS.requests],
     ["connections", "Connections", "You, your agents, and the people they can talk to.",
       graph(person, agents, profiles), ICONS.connections],
-    ["activity", "Activity", "Follows, likes, replies, and requests to connect.",
+    ["activity", "Activity", "Requests to connect, follows, likes and replies.",
+      (requests ? `<section class="reqs-to" id="reqs"><h2>Requests to connect <span class="n">${asked.length}</span></h2>
+<p class="sub">Only you can allow one; your agents can't. Decline and nothing is sent; they cannot ask again
+for 30 days.</p><div class="rows">${requests}</div></section><h2 class="earlier">Notifications</h2>` : "") +
       `<div class="notifs" id="notifs"><p class="muted">Loading…</p></div>`, BELL],
     ["agents", "Agents", "Each agent has its own private link.", `<div class="rows">${ags}</div>`,
       ICONS.agents],
     ["add", "Add an agent", "Four steps. Your agents connect to each other on their own.",
       add, ADD_ICON],
-    ["profile", "Profile", "How people see you when they find you, where you're signed in, " +
-      "and what happened on your account.", profile + devices + activity + danger, PROFILE_ICON],
+    // the rail's foot, not its list: your profile (your face) and Settings
+    ["profile", "Profile", "", `<div class="pp"><div class="bd" data-page="${esc(person.handle)}"></div></div>`,
+      null, true],
+    ["settings", "Settings", "Privacy, where you're signed in, and what happened on your account.",
+      privacy + devices + activity + danger, GEAR, true],
   ];
-  const first = start || (asked.length ? "requests" : !agents.length ? "add" : "connections");
+  const first = start || (asked.length ? "activity" : !agents.length ? "add" : "connections");
   const main = views.map(([v, t, d, body]) => `<section class="view" id="${v}"${v === first ? "" : " hidden"}>
-${v === "connections" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
-  const top = views.map(([v, t, , , icon]) => `<a href="#${v}"${v === first ? ' aria-current="page"' : ""}${
+${v === "connections" || v === "profile" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? `<div class="note">${note}</div>` : ""}${body}</section>`).join("");
+  const top = views.filter(x => !x[5]).map(([v, t, , , icon]) => `<a href="#${v}"${v === first ? ' aria-current="page"' : ""}${
     v === "activity" ? ` data-unread="${unread}"` : ""}${
-    v === "requests" && asked.length ? ' class="pip"' : ""}>${icon}<span data-short="${
+    v === "activity" && asked.length ? ' class="pip"' : ""}>${icon}<span data-short="${
     {connections: "Network", add: "Add"}[v] || t}">${t}</span></a>`).join("");
-  const bottom = `<form method="post" action="/signout"><button>${ICONS.signout}<span>Sign out</span>` +
-    `</button></form><a class="me" href="#profile" title="@${esc(person.handle)}"><i>${
-    esc((person.name || person.handle)[0].toUpperCase())}</i><span>@${esc(person.handle)}</span></a>`;
+  const myPhoto = photoOf(profiles[person.handle], person.handle);
+  const bottom = `<a class="set" href="#settings"${first === "settings" ? ' aria-current="page"' : ""}>${GEAR}` +
+    `<span>Settings</span></a><a class="me" href="#profile" title="@${esc(person.handle)}"${
+    first === "profile" ? ' aria-current="page"' : ""}><i>${myPhoto ? `<img src="${esc(myPhoto)}" alt="">` :
+    esc((person.name || person.handle)[0].toUpperCase())}</i><span data-short="Profile">@${esc(person.handle)}</span></a>`;
   const force = (start ? `(function(){ var a = document.querySelector('.nav a[href="#${start}"]');
   if (a) a.click(); })();` : "") + `window.addEventListener("hashchange", function(){
   var a = document.querySelector('.nav a[href="' + location.hash + '"]'); if (a) a.click(); });`;
@@ -752,7 +870,7 @@ const BOARD = `
   var render = function(el, handle){
     el.dataset.showing = handle;
     get("/home/board/" + encodeURIComponent(handle)).then(function(b){
-      if (el.dataset.showing === handle) draw(el, b);
+      if (el.dataset.showing === handle) (el.dataset.page ? drawPage : draw)(el, b);
     }, function(err){ el.textContent = ""; el.appendChild(h("p", {class: "muted", text: String(err)})); });
   };
   var stat = function(n, label, fn){
@@ -775,8 +893,8 @@ const BOARD = `
           c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, n, n);
           var data = c.toDataURL("image/jpeg", 0.85);
           send("/home/profile", {photo: data}).then(function(){
-            var me = g.querySelector(".node.me i");
-            if (me) { me.textContent = ""; me.appendChild(h("img", {src: data, alt: ""})); }
+            [g.querySelector(".node.me i"), document.querySelector(".nav .me i")].forEach(function(me){
+              if (me) { me.textContent = ""; me.appendChild(h("img", {src: data, alt: ""})); } });
             render(el, b.handle);
           }, function(err){ said.textContent = err; });
         };
@@ -831,9 +949,9 @@ const BOARD = `
     var note = h("span", {class: "note"});
     if (b.link === "connected") note.textContent = "Your agents are connected";
     else if (b.link === "asked") note.textContent = "Asked to connect · waiting for them";
-    else if (b.link === "asks-you") row.appendChild(h("a", {class: "note", href: "#requests",
-      text: "Wants to connect: see Requests", onclick: function(){
-        var a = document.querySelector('.nav a[href="#requests"]'); if (a) { a.click(); } }}));
+    else if (b.link === "asks-you") row.appendChild(h("a", {class: "note", href: "#activity",
+      text: "Wants to connect: see Activity", onclick: function(){
+        var a = document.querySelector('.nav a[href="#activity"]'); if (a) { a.click(); } }}));
     else if (b.your_agents.length) row.appendChild(h("button", {type: "button", class: "ghost",
       text: "Ask to connect", onclick: function(){ ask.hidden = !ask.hidden; }}));
     else note.textContent = "Add an agent to connect with theirs";
@@ -865,10 +983,7 @@ const BOARD = `
     po.addEventListener("submit", function(e){ e.preventDefault();
       send("/home/post", {text: po.elements.text.value}).then(function(){ render(el, b.handle); },
         function(err){ said.textContent = err; }); });
-    var pv = h("label", {class: "opt privacy"}, [h("input", {type: "checkbox", checked: b.private ? "" : null,
-      onchange: function(e){ send("/home/privacy", {private: e.target.checked}).then(function(){ render(el, b.handle); }); }}),
-      "Private account: only followers you approve see your posts"]);
-    el.appendChild(st); el.appendChild(po); el.appendChild(pv);
+    el.appendChild(st); el.appendChild(po);
   };
   // a post, with its like and its replies (thread opened in place)
   var postEl = function(el, x, mine, again, author){
@@ -915,7 +1030,8 @@ const BOARD = `
     fill();
   };
   var person = function(el, x, sub){
-    return h("button", {type: "button", class: "who", onclick: function(){ render(el, x.handle); }},
+    return h("button", {type: "button", class: "who", onclick: function(){
+      if (el.dataset.page) board(x.handle); else render(el, x.handle); }},
       [face(x.photo, x.name || x.handle), h("span", {}, [x.name || "@" + x.handle,
         h("small", {text: sub || "@" + x.handle + (x.status ? " · " + x.status : "")})])]);
   };
@@ -948,6 +1064,131 @@ const BOARD = `
       });
     });
   };
+
+  // -- your profile, the page: the face and counts up top, links pinned under the bio, posts as
+  // tiles (one opens over the page with its likes and replies); Edit profile opens in place --------
+  var ICON = {
+    github: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.1.9 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>',
+    linkedin: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.4 2H3.6A1.6 1.6 0 0 0 2 3.6v16.8A1.6 1.6 0 0 0 3.6 22h16.8a1.6 1.6 0 0 0 1.6-1.6V3.6A1.6 1.6 0 0 0 20.4 2zM8 19H5V9.5h3V19zM6.5 8.2a1.7 1.7 0 1 1 0-3.5 1.7 1.7 0 0 1 0 3.5zM19 19h-3v-4.6c0-1.1 0-2.5-1.5-2.5S12.8 13 12.8 14.3V19h-3V9.5h2.8v1.3c.4-.8 1.4-1.5 2.9-1.5 3.1 0 3.6 2 3.6 4.7V19z"/></svg>',
+    x: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.8 3h3.1l-6.8 7.7L22 21h-6.2l-4.9-6.3L5.3 21H2.2l7.2-8.3L1.9 3h6.4l4.4 5.8L17.8 3zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5z"/></svg>',
+    web: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>'
+  };
+  var linkOf = function(u){           // an address -> {kind, label}: GitHub, LinkedIn and X by name
+    var x; try { x = new URL(u); } catch (e) { return null; }
+    if (x.protocol !== "https:" && x.protocol !== "http:") return null;
+    var host = x.hostname.replace(/^www\\./, ""), bits = x.pathname.split("/").filter(Boolean);
+    if (host === "github.com") return {k: "github", label: bits[0] || "GitHub"};
+    if (host === "linkedin.com" || /\\.linkedin\\.com$/.test(host)) return {k: "linkedin", label: bits[1] || "LinkedIn"};
+    if (host === "x.com" || host === "twitter.com") return {k: "x", label: bits[0] ? "@" + bits[0] : "X"};
+    return {k: "web", label: host + (bits.length ? "/" + bits.join("/") : "")};
+  };
+  var pinned = function(links){
+    var row = h("div", {class: "plinks"});
+    (links || []).forEach(function(u){
+      var k = linkOf(u); if (!k) return;
+      var ic = h("span", {class: "li"}); ic.innerHTML = ICON[k.k];
+      row.appendChild(h("a", {class: "plink " + k.k, href: u, target: "_blank", rel: "noopener noreferrer nofollow ugc",
+        title: u}, [ic, h("span", {text: k.label})]));
+    });
+    return row.childNodes.length ? row : null;
+  };
+  var board = function(handle){        // someone else's board: in the canvas's panel
+    var a = document.querySelector('.nav a[href="#connections"]'); if (a) a.click();
+    setTimeout(function(){ if (window.cxBoard) window.cxBoard(handle); }, 50);
+  };
+  var BUBBLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4.2A8 8 0 1 1 20 11.5z"/></svg>';
+  var opened = function(el, x, b){      // a post over the page: its whole text, likes and replies
+    var shut = function(){ document.removeEventListener("keydown", esc_); m.remove(); render(el, b.handle); };
+    var esc_ = function(e){ if (e.key === "Escape") shut(); };
+    var card = h("div", {class: "pcard", role: "dialog", "aria-modal": "true"}, [
+      h("button", {type: "button", class: "x", "aria-label": "Close", text: "×", onclick: shut}),
+      h("div", {class: "pby"}, [face(b.photo, b.name || b.handle), h("span", {}, [h("b", {text: b.name || "@" + b.handle}),
+        h("small", {text: "@" + b.handle})])]),
+      postEl(el, x, b.self, shut)]);
+    var m = h("div", {class: "pmodal"}, [card]);
+    m.addEventListener("click", function(e){ if (e.target === m) shut(); });
+    document.addEventListener("keydown", esc_);
+    document.body.appendChild(m);
+  };
+  var editor = function(el, b){
+    var said = h("span", {class: "note"});
+    var links = (b.links || []).slice(); while (links.length < 5) links.push("");
+    var f = h("form", {class: "pedit"}, [
+      h("label", {}, ["Name", h("input", {name: "name", maxlength: "60", value: b.name || ""})]),
+      h("label", {}, ["Status", h("input", {name: "status", maxlength: "100", value: b.status || "",
+        placeholder: "What you're up to"})]),
+      h("label", {}, ["Bio", h("textarea", {name: "bio", maxlength: "280", rows: "3",
+        placeholder: "A line about you: what you do, what you're into."})]),
+      h("fieldset", {}, [h("legend", {text: "Links"}), h("small", {text: "Your GitHub, LinkedIn, X or your own site. Up to five."})]
+        .concat(links.map(function(u, i){ return h("input", {name: "link", value: u, inputmode: "url", autocapitalize: "off",
+          spellcheck: "false", placeholder: ["github.com/you", "your-site.com", "linkedin.com/in/you", "x.com/you", "another link"][i]}); }))),
+      h("div", {class: "row2"}, [h("button", {text: "Save"}), h("button", {type: "button", class: "ghost", text: "Cancel",
+        onclick: function(){ render(el, b.handle); }}), said])]);
+    f.elements.bio.value = b.bio || "";
+    f.addEventListener("submit", function(e){
+      e.preventDefault(); said.textContent = "Saving…";
+      var ls = [].map.call(f.querySelectorAll("input[name=link]"), function(i){ return i.value.trim(); }).filter(Boolean);
+      send("/home/profile", {name: f.elements.name.value, bio: f.elements.bio.value, links: ls})
+        .then(function(){ return send("/home/status", {status: f.elements.status.value}); })
+        .then(function(){ render(el, b.handle); }, function(err){ said.textContent = err; });
+    });
+    return f;
+  };
+  var drawPage = function(el, b){
+    el.textContent = "";
+    var pp = b.self ? photoPicker(el, b) : [face(b.photo, b.name || b.handle, "big"), null];
+    var gear = h("a", {class: "gear", href: "#settings", "aria-label": "Settings", onclick: function(e){
+      e.preventDefault(); var a = document.querySelector('.nav a[href="#settings"]'); if (a) a.click(); }});
+    gear.innerHTML = ${JSON.stringify(GEAR)};
+    var edit = b.self ? h("button", {type: "button", class: "ghost", text: "Edit profile", onclick: function(){
+      about.hidden = true; about.parentNode.insertBefore(editor(el, b), about.nextSibling); }}) : null;
+    var stats = h("div", {class: "stats"}, [stat(b.posts_n, b.posts_n === 1 ? "post" : "posts"),
+      stat(b.followers, b.followers === 1 ? "follower" : "followers", function(){ list(el, b, "followers"); }),
+      stat(b.following, "following", function(){ list(el, b, "following"); })]);
+    var about = h("div", {class: "pabout"}, [
+      b.status ? h("p", {class: "status", text: b.status}) : null,
+      b.bio ? h("p", {class: "bio", text: b.bio}) : null,
+      pinned(b.links),
+      b.agents.length ? h("div", {class: "agents"}, b.agents.map(function(n){
+        return h("span", {class: "ag", title: "@" + b.handle + "/" + n}, [mark(n), NAMES[kind(n)] || n]); })) : null,
+      b.self && !b.bio && !(b.links || []).length ? h("p", {class: "muted", text: "Add a bio and pin your GitHub or " +
+        "website: Edit profile."}) : null]);
+    el.appendChild(h("header", {class: "phd"}, [h("div", {class: "pface"}, [pp[0]]),
+      h("div", {class: "ptop"}, [h("h1", {}, [b.name || "@" + b.handle, b.private ? lock() : null]),
+        h("small", {text: "@" + b.handle}), pp[1]]),
+      h("div", {class: "pacts"}, [edit, b.self ? gear : null]), stats, about]));
+    if (b.self && b.requests) el.appendChild(h("button", {type: "button", class: "reqs",
+      text: b.requests + (b.requests === 1 ? " follow request" : " follow requests"), onclick: function(){ list(el, b, "requests"); }}));
+    if (b.self) {
+      var said = h("span", {class: "note"});
+      var po = h("form", {class: "pcompose"}, [face(b.photo, b.name || b.handle), h("textarea", {name: "text",
+        maxlength: "500", rows: "2", placeholder: "Share something with your followers"}), h("button", {text: "Post"}), said]);
+      po.addEventListener("submit", function(e){ e.preventDefault();
+        send("/home/post", {text: po.elements.text.value}).then(function(){ render(el, b.handle); },
+          function(err){ said.textContent = err; }); });
+      el.appendChild(po);
+    }
+    el.appendChild(h("div", {class: "ptabs"}, [h("span", {text: "Posts"})]));
+    if (!b.posts.length) {
+      el.appendChild(h("div", {class: "pempty"}, [h("b", {text: b.self ? "Share your first post" : "No posts yet"}),
+        b.self ? h("small", {text: "Your followers see it here and in their feed."}) : null]));
+      return;
+    }
+    el.appendChild(h("div", {class: "pgrid"}, b.posts.map(function(x){
+      var bub = h("span", {class: "bub"}); bub.innerHTML = BUBBLE;
+      return h("button", {type: "button", class: "tile", onclick: function(){ opened(el, x, b); }}, [
+        h("p", {text: x.text}), h("span", {class: "tm"}, [h("span", {class: x.liked ? "on" : "", text: "♥ " + x.likes}),
+          h("span", {}, [bub, String(x.replies)]), h("small", {text: ago(x.at)})])]);
+    })));
+  };
+  var page = document.querySelector(".pp .bd[data-page]");
+  if (page) {
+    page.dataset.page = "1";
+    var pview = document.getElementById("profile");
+    var fill = function(){ if (!pview.hidden) render(page, ME); };
+    new MutationObserver(fill).observe(pview, {attributes: true, attributeFilter: ["hidden"]});
+    fill();
+  }
 
   // a panel with a board opens: the board is drawn fresh
   var boards = g.querySelectorAll(".ncard .bd[data-board]");
@@ -1070,8 +1311,9 @@ const NOTIFS = `
       acts.appendChild(h("button", {type: "button", class: w === "Approve" ? "" : "ghost", text: w, onclick: function(){
         send("/home/follow-answer", {handle: x.handle, yes: w === "Approve"}).then(load); }}));
     });
-    if (x.kind === "connect") acts.appendChild(h("a", {href: "#requests", class: "ghost", text: "Open Requests",
-      onclick: function(e){ e.preventDefault(); go("requests"); }}));
+    var reqs = document.getElementById("reqs");      // still waiting: answered at the top of this view
+    if (x.kind === "connect" && reqs) acts.appendChild(h("a", {href: "#activity", class: "ghost", text: "Answer",
+      onclick: function(e){ e.preventDefault(); reqs.scrollIntoView({behavior: "smooth"}); }}));
     if (x.kind === "notice") {         // from the Constellation itself, to everyone
       if (x.ref) acts.appendChild(h("a", {href: x.ref, class: "ghost", target: "_blank", rel: "noopener", text: "Read"}));
       return h("div", {class: "n" + (x.read ? "" : " new")}, [h("i", {class: "face sys", text: "i"}),
