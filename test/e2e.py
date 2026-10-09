@@ -334,6 +334,14 @@ def main():
         check("Get a new link" in home, "Agents offers a new link for it")
         fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
         check(get_as(fresh, UA["User-Agent"])[0] == 200, "the new link works")
+        # a link not used for 30 days dies (aged by the operator), and the human is told
+        admin("idle-link", {"handle": f"zeke{run}", "id": waits[newlink]})
+        code, body = get_as(fresh, UA["User-Agent"])
+        check(code == 410 and "not used for 30 days" in body, "a link not used for 30 days stops working")
+        check([n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "link_expired"
+               and n["text"].endswith("|idle")], "and Activity says why")
+        fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
+        check(get_as(fresh, UA["User-Agent"])[0] == 200, "Get a new link: the new one works")
         if TEST_SITE:                 # a notice reaches every account: never from a test on production
           note = {"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}
           check(admin("notice", note) == 403, "a notice to everyone needs the owner's key: the support key is refused")
@@ -477,6 +485,48 @@ def main():
     post(B + "/home", {"do": "add", "agent": ["muse", "claude-code"], "send": "ask", "every": "5m"}, spo)
     out = post(B + "/home", {"do": "add", "agent": ["muse"], "send": "ask", "every": "5m"}, spo)
     check("At most 6 agents" in out and "data-wait=" not in out, "a person has at most 6 agents")
+    # one agent sends at most MESSAGES_PER_DAY messages a day (what a stolen link can send)
+    most = int(os.environ.get("E2E_MESSAGES_PER_DAY", "300"))
+    sent = 0
+    while sent <= most and "Sent to" in get(m + "/say?" + U.urlencode({"to": f"@spm{run}/claude-code", "text": f"m{sent}"})):
+        sent += 1
+    check(sent == most, f"one agent sends at most {most} messages a day ({sent})")
+    check("Sent to" in get(c + "/say?" + U.urlencode({"to": f"@spm{run}/muse", "text": "from c"})),
+          "the cap is the agent's: another agent still sends")
+    # agents' searches count toward the person's 30 an hour, whichever agent searches
+    n, last = 0, (200, "")
+    while n < 40:
+        last = get_as((m if n % 2 else c) + "/find?q=zeke", UA["User-Agent"])
+        if last[0] != 200: break
+        n += 1
+    check(n == 30 and last[0] == 429 and "at most 30 searches an hour" in last[1],
+          f"30 searches an hour a person, from all their agents, then 429 ({n})")
+    # a HEAD (a link preview, a prefetch) does nothing
+    try:
+        with R.urlopen(R.Request(loc(zm + "/say?" + U.urlencode({"to": f"@dad{run}", "text": f"head-probe-{run}"})),
+                                 method="HEAD", headers=UA), timeout=20) as r:
+            hcode = r.status
+    except R.HTTPError as e:
+        hcode = e.code
+    check(hcode == 405 and f"head-probe-{run}" not in get(zm + "/say?" + U.urlencode({"to": f"@dad{run}"})),
+          "a HEAD on an action link is refused and sends nothing")
+    i1 = get(zm + "/invite?" + U.urlencode({"name": "Kim", "why": f"once-{run}"}))
+    i2 = get(zm + "/invite?" + U.urlencode({"name": "Kim", "why": f"once-{run}"}))
+    l1, l2 = re.findall(r"/i/([A-Za-z0-9]+)", i1), re.findall(r"/i/([A-Za-z0-9]+)", i2)
+    check(l1 and l1 == l2 and get(zm).count(f"once-{run}") == 1, "the same invite opened twice is one invite")
+    # links have their own refs; a link from before refs is found once in the directory (until
+    # LINKS_MIGRATED, when the owner's migrate-links has copied every link)
+    if TEST_SITE and os.environ.get("ADMIN"):
+        sid = waits[sp["muse"]]
+        admin("drop-ref", {"handle": f"spm{run}", "id": sid})
+        if os.environ.get("E2E_LINKS_MIGRATED") == "1":
+            check(get_as(m, UA["User-Agent"])[0] == 404, "LINKS_MIGRATED: a link with no ref is not looked up in the directory")
+            check(admin("migrate-links", {}) == 403, "migrate-links needs the owner's key")
+            check(admin("migrate-links", {}, os.environ["ADMIN_OWNER"]).get("migrated", 0) > 0
+                  and get_as(m, UA["User-Agent"])[0] == 200, "the owner's migrate-links gives it its ref again")
+        else:
+            check(get_as(m, UA["User-Agent"])[0] == 200 and get_as(m, UA["User-Agent"])[0] == 200,
+                  "a link from before refs still works, found once in the directory")
     # new accounts an IP a day (an e2e account, marked by Clerk's backend, is never counted)
     if TEST_SITE and os.environ.get("ADMIN"):
         admin("reset-signups", {})
@@ -566,6 +616,24 @@ def main():
         check(not {f"gonea{run}", f"goneb{run}", real} & set(handles)
               and refused(lambda: get(g1["muse"])) and refused(lambda: get(g2["muse"])),
               "and never an account deleted since, or in the seconds before it: not listed, links dead")
+    # per IP at the edge: wrong secrets, then everything (a minute's wait after each, for the clean-up)
+    if TEST_SITE:
+        # Cloudflare's counters are eventually consistent: the limit engages within a burst, not at
+        # an exact count
+        bad = []
+        for i in range(150):
+            bad.append(get_as(B + "/a/" + "Z" * 20 + f"{i:06d}", UA["User-Agent"])[0])
+            if bad[-1] == 429 and len(bad) > 30: break
+        check(bad[0] == 404 and set(bad) <= {404, 429} and 429 in bad,
+              f"wrong links: 404, then 429 once past the limit (after {bad.index(429) if 429 in bad else '-'})")
+        time.sleep(65)
+        check(get_as(zm, UA["User-Agent"])[0] == 200, "a minute on, the right link works again")
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(32) as pool:
+            codes = list(pool.map(lambda i: get_as(B + "/.well-known/security.txt", UA["User-Agent"])[0], range(1500)))
+        check(codes.count(200) >= 500 and set(codes) <= {200, 429} and 429 in codes,
+              f"every request: 429 past 600 a minute ({codes.count(200)} served, {codes.count(429)} refused of 1500)")
+        time.sleep(65)
     print("ALL PASS", flush=True)
 
 

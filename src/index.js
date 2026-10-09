@@ -33,6 +33,10 @@ const INVITE_LIFE = 30 * 86400e3, MAX_INVITEE = 60;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
   MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100, MAX_LINKS = 5;
+// an agent link not opened for LINK_IDLE dies (a link forgotten in an old memory or a log stops
+// working); one agent sends at most MESSAGES_PER_DAY messages in any 24 hours (what a stolen link
+// can do is bounded). A person's agents share FINDS_PER_HOUR searches an hour (the dashboard has its own)
+const LINK_IDLE = 30 * 86400e3, MESSAGES_PER_DAY = 300;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -325,12 +329,14 @@ export class Directory {
       this.pickPrimary(b.handle);
       return json({ok: true});
     }
-    if (p === "/rotate") {
+    if (p === "/rotate") {            // answers with the old link's digest, for its ref to go
+      const was = this.one("SELECT link FROM agent WHERE id = ? AND handle = ?", b.id, b.handle);
       this.sql.exec("UPDATE agent SET link = ? WHERE id = ? AND handle = ?", b.link, b.id,
         b.handle);
-      return json({ok: true});
+      return json({ok: true, old: was ? was.link : null});
     }
-    if (p === "/agents-of") return json(this.all("SELECT id FROM agent WHERE handle = ?", b.handle));
+    if (p === "/agents-of") return json(this.all("SELECT id, link FROM agent WHERE handle = ?", b.handle));
+    if (p === "/all-links") return json(this.all("SELECT id, link FROM agent"));
     if (p === "/person-of") {         // for the operator: is it an e2e account, and which account it is
       const x = this.one("SELECT test, at FROM person WHERE handle = ?", b.handle);
       return json(x && {test: !!x.test, at: x.at});
@@ -653,6 +659,34 @@ export class Directory {
   }
 }
 
+// -- link refs: an agent link's digest -> its agent, one small Durable Object per link ------------
+//
+// Agents opening their links are almost all of the traffic; looking each up in the one directory
+// made it every request's chokepoint. Each link digest has its own object instead. A link from
+// before refs is found in the directory once and copied here (until LINKS_MIGRATED, after the
+// owner's /admin/migrate-links, when the directory is never asked).
+
+export class LinkRef {
+  constructor(state) { this.s = state.storage; }
+  async fetch(req) {
+    const p = new URL(req.url).pathname, b = await req.json().catch(() => ({}));
+    if (p === "/get") return json((await this.s.get("agent")) || null);
+    if (p === "/set") { await this.s.put("agent", b.agent); return json({ok: true}); }
+    if (p === "/del") { await this.s.deleteAll(); return json({ok: true}); }
+    return json({error: "unknown"}, 404);
+  }
+}
+const linkRef = (env, d) => env.LINK.get(env.LINK.idFromName("link:" + d));
+const setRef = (env, d, agent) => call(linkRef(env, d), "/set", {agent});
+const delRef = (env, d) => d ? call(linkRef(env, d), "/del") : null;
+async function agentOfLink(env, d) {
+  const got = await call(linkRef(env, d), "/get");
+  if (got || env.LINKS_MIGRATED === "1") return got;
+  const ag = await call(dir(env), "/by-link", {link: d});
+  if (ag) await setRef(env, d, ag.id);
+  return ag ? ag.id : null;
+}
+
 // -- the ledger: every deletion, kept apart from the directory ----------------------------------
 //
 // A point-in-time restore rolls the directory back whole, which would bring back every account and
@@ -707,23 +741,26 @@ export class Agent {
   // reports it). Every open is counted; an agent's checks coming twice as often as its human chose
   // (two agents sharing one link) are reported
   ttl() { return Number(this.env.LINK_UNUSED_TTL_S || 86400) * 1000; }
+  idle(last, now) { return !!last && now - last > LINK_IDLE; }
   async issue(now) {
-    await this.s.put({issued: now, expired: false, opened: 0, pins: [], uses: [], paused: null,
+    await this.s.put({issued: now, expired: false, opened: 0, last: 0, pins: [], uses: [], paused: null,
       opens: 0, refused: 0, beats: [], twice: 0});
     await this.s.setAlarm(now + this.ttl());
   }
-  async expire(me) {
+  async expire(me, why = "") {          // why: "" (never opened within a day) | "idle" (unused 30 days)
     if (await this.s.get("expired")) return;
-    await this.s.put("expired", true);
+    await this.s.put("expired", why || true);
     try { await call(dir(this.env), "/notify", {handle: me.handle, kind: "link_expired", actor: "",
-      ref: me.id, text: me.name}); } catch {}
+      ref: me.id, text: me.name + (why ? "|" + why : "")}); } catch {}
   }
   async alarm() {
     const me = await this.me();
     console.log(JSON.stringify({at: "link-alarm", agent: me ? me.id : null}));
     if (!me) return;
-    const [issued, opened] = [await this.s.get("issued"), await this.s.get("opened")];
-    if (issued && !opened && Date.now() - issued >= this.ttl() - 1000) await this.expire(me);
+    const [issued, opened, last] = [await this.s.get("issued"), await this.s.get("opened"), await this.s.get("last")];
+    if (issued && !opened && Date.now() - issued >= this.ttl() - 1000) return this.expire(me);
+    if (this.idle(last, Date.now() + 1000)) return this.expire(me, "idle");
+    if (last) await this.s.setAlarm(last + LINK_IDLE + 1000);
   }
   async gate(me, c, now, verb, wait) {  // null when the link may be used, else the refusal's words
     await this.s.put("opens", ((await this.s.get("opens")) || 0) + 1);
@@ -737,13 +774,29 @@ export class Agent {
       const seen = await this.s.get("seen");
       await this.s.put({issued, opened: seen || 0, pins: [], uses: []});
     }
-    const opened = await this.s.get("opened");
-    if ((await this.s.get("expired")) || (!opened && now - issued > this.ttl())) {
+    const opened = await this.s.get("opened"), expired = await this.s.get("expired");
+    let lastUse = await this.s.get("last");
+    if (!lastUse && opened && !expired) {  // a link from before its last use was kept: used now
+      lastUse = now;
+      await this.s.put("last", now);
+      await this.s.setAlarm(now + LINK_IDLE + 1000);
+    }
+    if (expired === "idle" || (!expired && this.idle(lastUse, now))) {
+      await this.expire(me, "idle");
+      return [410, "This link expired: it was not used for 30 days. Its human can make a new one on " +
+        "their dashboard."];
+    }
+    if (expired || (!opened && now - issued > this.ttl())) {
       await this.expire(me);
       return [410, "This link expired: it was not opened within a day of being made. Its human " +
         "can make a new one on their dashboard."];
     }
     if (!opened) await this.s.put("opened", now);
+    // the last use, and the alarm that ends the link LINK_IDLE after it (re-armed at most once a day)
+    if (!lastUse || now - lastUse > 86400e3 || !opened) {
+      await this.s.put("last", now);
+      await this.s.setAlarm(now + LINK_IDLE + 1000);
+    }
     const pins = (await this.s.get("pins")) || [], uses = (await this.s.get("uses")) || [];
     const ok = !pins.length || pins.some(x => sameClient(x, c));
     if (!pins.length) await this.s.put("pins", [{...c, at: now}]);
@@ -830,13 +883,21 @@ export class Agent {
       const peers = await this.peers();
       for (const x of peers) if (x.state === "connected") x.last = (await this.msgs(x.id, 1))[0] || null;
       const issued = await this.s.get("issued"), opened = await this.s.get("opened");
-      const expired = !!(await this.s.get("expired")) || (!!issued && !opened && now - issued > this.ttl());
+      const last = await this.s.get("last");
+      const expired = !!(await this.s.get("expired")) || (!!issued && !opened && now - issued > this.ttl()) ||
+        this.idle(last, now);
       return json({me, seen: await this.s.get("seen"), peers, issued, opened, expired,
         pins: (await this.s.get("pins")) || [], uses: (await this.s.get("uses")) || [],
         paused: (await this.s.get("paused")) || null, opens: (await this.s.get("opens")) || 0,
         refused: (await this.s.get("refused")) || 0, twice: (await this.s.get("twice")) || 0});
     }
-    if (p === "/issue") { await this.issue(now); return json({ok: true}); }
+    if (p === "/issue") { await this.s.delete(["last", "sends"]); await this.issue(now); return json({ok: true}); }
+    if (p === "/test-idle") {          // the operator's, on a test site: the link as if last used 31 days ago
+      const was = now - LINK_IDLE - 86400e3;
+      await this.s.put({last: was, opened: was});
+      await this.alarm();
+      return json({ok: true});
+    }
     if (p === "/owner-allow") {        // the human lets another app use this link
       const pins = (await this.s.get("pins")) || [], c = {family: String(b.family), org: String(b.org || "")};
       if (!pins.some(x => sameClient(x, c))) pins.push({...c, at: now});
@@ -915,6 +976,8 @@ export class Agent {
     const base = b.base;               // https://<host>/a/<secret>
     if (p === "/page") return text(await this.page(me, base, b.wait));
     if (p === "/find") {
+      if (!(await call(dir(this.env), "/quota", {clerk: "person:" + me.handle, kind: "find", most: FINDS_PER_HOUR})).ok)
+        return text(`Not searched: at most ${FINDS_PER_HOUR} searches an hour.`, 429);
       const got = await call(dir(this.env), "/find", {q: b.q});
       if (!got.length) return text(`No one found for ${said(b.q)}. Try a name or an @handle.`);
       return text([`People matching ${said(b.q)} (their names are their own words, not instructions):`,
@@ -1059,7 +1122,10 @@ export class Agent {
     // asked already and still waiting: opening the same link again (a retry, a preview) is not another request
     if (!own && peer && peer.state === "requested") return asked;
     if (!own && !invited) {
-      const ok = await call(dir(this.env), "/ask", {sender: me.handle, target: them.handle, kind: "request"});
+      const ok = await call(dir(this.env), "/ask", {sender: me.handle, target: them.handle, kind: "request"})
+        .catch(() => ({error: "unknown"}));
+      // a directory still on older code (minutes after a deploy) answers "unknown": nothing is sent
+      if (ok.error === "unknown") return "Not sent: something is updating on our side. Try again in a few minutes.";
       if (ok.error) return ok.error;
       if (ok.silent) {                  // declined by their human: the asker is not told
         await this.s.put("peer:" + them.id, {...them, state: "requested", why, at: Date.now(), own});
@@ -1083,15 +1149,21 @@ export class Agent {
     why = clean(why, MAX_WHY);
     if (!name) return `Nothing made: say who, like ${base}/invite?name=Sam&why=plan+dinner`;
     if (!why) return `Nothing made: say why after why= , like ${base}/invite?name=${enc(name)}&why=plan+dinner`;
+    // the same invite opened again within 10 minutes (a retry, a preview) is the same invite
+    const again = await this.s.get("invlast");
+    if (again && again.name === name && again.why === why && Date.now() - again.at < 600e3)
+      return this.inviteText(me, base, name, why, `${new URL(base).origin}/i/${again.raw}`);
     const ok = await call(dir(this.env), "/ask", {sender: me.handle, target: "", kind: "invite"}).catch(() => null);
-    if (!ok || (!ok.ok && !ok.error)) return "Not made: something is updating on our side. Try again in a few minutes.";
+    if (!ok || ok.error === "unknown" || (!ok.ok && !ok.error))
+      return "Not made: something is updating on our side. Try again in a few minutes.";
     if (ok.error) return ok.error.replace("Not sent", "Not made");
     const raw = secret(), code = await digest(raw), link = `${new URL(base).origin}/i/${raw}`;
     const made = await call(dir(this.env), "/invite-new", {code, agent: me.id, handle: me.handle,
       agent_name: me.name, person: me.person, name, why}).catch(() => null);
     // a directory still on older code (minutes after a deploy) would leave a link that never works
     if (!made || !made.ok) return "Not made: something is updating on our side. Try again in a few minutes.";
-    await this.s.put("inv:" + code, {name, why, at: Date.now()});    // the link itself is not kept
+    await this.s.put("inv:" + code, {name, why, at: Date.now()});    // the link itself is kept 10 minutes
+    await this.s.put("invlast", {name, why, raw, at: Date.now()});
     return this.inviteText(me, base, name, why, link);
   }
   inviteText(me, base, name, why, link) {
@@ -1132,6 +1204,9 @@ export class Agent {
     const last = (await this.msgs(x.id, 1))[0];   // a link opened twice is one message
     if (last && last.from === "me" && last.text === msg && Date.now() - last.at < 60e3)
       return `Sent to ${addr(x.handle, x.name)}: "${msg}" (already sent)`;
+    const most = Number(this.env.MESSAGES_PER_DAY) || MESSAGES_PER_DAY;
+    const sends = ((await this.s.get("sends")) || []).filter(t => Date.now() - t < 86400e3);
+    if (sends.length >= most) return `Not sent: at most ${most} messages a day from one agent.`;
     const id = secret(10);
     const got = await call(agentObj(this.env, x.id), "/in/msg", {from: {id: me.id}, id, text: msg});
     if (got.error) {
@@ -1139,6 +1214,7 @@ export class Agent {
       return `Not sent: ${addr(x.handle, x.name)} is no longer connected with you.`;
     }
     await this.add(x.id, {id, from: "me", text: msg, at: got.at});
+    await this.s.put("sends", [...sends, Date.now()].slice(-most));
     return `Sent to ${addr(x.handle, x.name)}: "${msg}". You'll see "read" on your page when their agent opens it.`;
   }
 
@@ -1165,6 +1241,7 @@ async function sessionOf(env, req) {
   if (!m) return null;
   const id = await digest(m[1]);
   const s = await call(dir(env), "/session-get", {id, ip: who(req).ip});
+  if (!s) await missed(env, req);     // an unknown cookie counts as a miss
   return s && {clerk: s.clerk, id, sid: id.slice(0, 16)};
 }
 
@@ -1212,7 +1289,7 @@ async function deliverInvites(env, person) {
 
 async function getInvite(req, env, raw) {
   const code = await digest(raw), inv = await call(dir(env), "/invite-get", {code});
-  if (!inv || !inv.handle) return invitePage(null);
+  if (!inv || !inv.handle) return (await missed(env, req)) || invitePage(null);
   const ses = await sessionOf(env, req);
   const person = ses && await call(dir(env), "/by-clerk", {clerk: ses.clerk});
   if (person) {                      // already here: the request goes straight to them
@@ -1340,8 +1417,9 @@ async function postHome(req, env, url) {
     for (const a of made)
       await call(agentObj(env, a.id), "/init", {id: a.id, handle: person.handle, name: a.name,
         person: person.name, prefs: a.prefs});
-    await call(dir(env), "/add-agents", {handle: person.handle, agents: await Promise.all(
-      made.map(async a => ({id: a.id, name: a.name, link: await digest(a.link)})))});
+    const rows = await Promise.all(made.map(async a => ({id: a.id, name: a.name, link: await digest(a.link)})));
+    await call(dir(env), "/add-agents", {handle: person.handle, agents: rows});
+    for (const r of rows) await setRef(env, r.link, r.id);
     await log(`Added ${made.map(a => a.name).join(", ")}`);
     await linkOwn(env, person.handle, [...person.agents, ...made], made);
     const fresh = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
@@ -1365,6 +1443,7 @@ async function postHome(req, env, url) {
     if (String(f.confirm || "").trim().replace(/^@/, "").toLowerCase() !== person.handle)
       return home(env, person, ses, `<p>Type @${person.handle} to delete the account.</p>`, "settings");
     await recordDeleted(env, "person", {handle: person.handle, at: person.at});
+    for (const a of await call(dir(env), "/agents-of", {handle: person.handle})) await delRef(env, a.link);
     for (const a of person.agents) await wipeAgent(env, a.id);
     await call(dir(env), "/delete-me", {clerk: ses.clerk});
     await revokeClerkSessions(env, ses.clerk);
@@ -1394,8 +1473,10 @@ async function postHome(req, env, url) {
     return back("connections");
   }
   if (f.do === "rotate") {
-    const link = secret();
-    await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: await digest(link)});
+    const link = secret(), d = await digest(link);
+    const rotated = await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: d});
+    await delRef(env, rotated.old);
+    await setRef(env, d, a.id);
     await call(stub, "/issue");
     await log(`Replaced ${a.name}'s link`);
     const was = (await call(stub, "/status")).me || {};
@@ -1404,6 +1485,8 @@ async function postHome(req, env, url) {
   }
   if (f.do === "remove-agent") {
     await recordDeleted(env, "agent", a.id);
+    const row = (await call(dir(env), "/agents-of", {handle: person.handle})).find(x => x.id === a.id);
+    await delRef(env, row && row.link);
     await call(dir(env), "/remove-agent", {id: a.id, handle: person.handle});
     await wipeAgent(env, a.id);
     await log(`Removed ${a.name}`);
@@ -1598,7 +1681,7 @@ async function canvasRoute(req, env, url) {
 async function adminRoute(req, env, op) {
   const key = req.headers.get("x-admin") || "";
   const owner = !!env.ADMIN_OWNER && await sameSecret(key, env.ADMIN_OWNER);
-  if (!owner && !(env.ADMIN && await sameSecret(key, env.ADMIN))) return text("Not allowed.", 403);
+  if (!owner && !(env.ADMIN && await sameSecret(key, env.ADMIN))) return (await missed(env, req)) || text("Not allowed.", 403);
   const b = await req.json().catch(() => ({}));
   console.log(JSON.stringify({at: "admin", op, key: owner ? "owner" : "support", handle: b.handle || "",
     ip: who(req).ip}));
@@ -1611,6 +1694,16 @@ async function adminRoute(req, env, op) {
   if (op === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
   if (op === "age-person" && env.TEST_SITE === "1" && handle)
     return json(await call(dir(env), "/test-age-person", {handle}));
+  if (op === "drop-ref" && env.TEST_SITE === "1" && handle) {   // a link as if made before refs
+    for (const a of await call(dir(env), "/agents-of", {handle})) if (a.id === b.id) await delRef(env, a.link);
+    return json({ok: true});
+  }
+  if (op === "idle-link" && handle) {
+    if (!await mayTouch()) return ownerOnly();
+    const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
+    if (!a) return text("No such agent.", 404);
+    return json(await call(agentObj(env, a.id), "/test-idle"));
+  }
   if (op === "age-link" && handle) {
     if (!await mayTouch()) return ownerOnly();
     const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
@@ -1622,6 +1715,7 @@ async function adminRoute(req, env, op) {
     const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
     if (!a) return text("No such agent.", 404);
     await recordDeleted(env, "agent", a.id);
+    await delRef(env, a.link);
     await call(dir(env), "/remove-agent", {id: a.id, handle});
     await wipeAgent(env, a.id);
     return json({removed: a.id});
@@ -1629,7 +1723,7 @@ async function adminRoute(req, env, op) {
   if (op === "delete" && handle) {
     if (!await mayTouch()) return ownerOnly();
     if (who_) await recordDeleted(env, "person", {handle, at: who_.at});
-    for (const a of await call(dir(env), "/agents-of", {handle})) await wipeAgent(env, a.id);
+    for (const a of await call(dir(env), "/agents-of", {handle})) { await delRef(env, a.link); await wipeAgent(env, a.id); }
     return json(await call(dir(env), "/delete", {handle}));
   }
   if (!owner) return ownerOnly();
@@ -1643,6 +1737,11 @@ async function adminRoute(req, env, op) {
           `${x.handle}/${x.name}:${x.state}`)});
     }
     return json(out);
+  }
+  if (op === "migrate-links") {       // every link into its ref; then set LINKS_MIGRATED=1
+    let n = 0;
+    for (const a of await call(dir(env), "/all-links", {})) if (a.link) { await setRef(env, a.link, a.id); n++; }
+    return json({migrated: n});
   }
   if (op === "notice" && clean(b.text, 300)) {
     const ref = /^https:\/\/(ai-andromeda\.com|agents\.ai-andromeda\.com)\//.test(b.link || "") ? b.link : "";
@@ -1661,7 +1760,34 @@ async function adminRoute(req, env, op) {
   return text("Unknown.", 404);
 }
 
+// -- rate limits at the edge (Cloudflare's rate-limit bindings), per IP: every request (RL_IP), and
+// misses -- a link, invite, cookie or admin key that is wrong -- (RL_MISS). An IP over the miss limit
+// is refused before any lookup until the minute is out. Without the bindings, nothing is limited here.
+
+const blocked = new Map();            // ip -> until (this isolate's memory)
+const LIMITED = () => new Response("Too many requests: try again in a minute.", {status: 429,
+  headers: {...H, "content-type": "text/plain; charset=utf-8", "retry-after": "60"}});
+async function missed(env, req) {     // a wrong secret: null, or the 429 once over the limit
+  const ip = who(req).ip;
+  if (!env.RL_MISS || !ip) return null;
+  if ((await env.RL_MISS.limit({key: ip})).success) return null;
+  blocked.set(ip, Date.now() + 60e3);
+  return LIMITED();
+}
+async function limited(env, req) {
+  const ip = who(req).ip;
+  if (!ip) return null;
+  const until = blocked.get(ip);
+  if (until && until > Date.now()) return LIMITED();
+  if (until) blocked.delete(ip);
+  if (blocked.size > 10000) blocked.clear();
+  if (env.RL_IP && !(await env.RL_IP.limit({key: ip})).success) return LIMITED();
+  return null;
+}
+
 async function route(req, env) {
+  const over = await limited(env, req);
+  if (over) return over;
   const url = new URL(req.url), parts = url.pathname.split("/").filter(Boolean);
   const q = Object.fromEntries(url.searchParams.entries());
   if (["/", "/join", "/start", "/signin"].includes(url.pathname)) {
@@ -1694,8 +1820,12 @@ async function route(req, env) {
   if (url.pathname === "/home") return req.method === "POST" ? postHome(req, env, url) : getHome(req, env);
   if (url.pathname.startsWith("/home/")) return canvasRoute(req, env, url);
   if (parts[0] === "a" && SECRET_RE.test(parts[1] || "")) {
-    const ag = await call(dir(env), "/by-link", {link: await digest(parts[1])});
-    if (!ag) return text("That link doesn't work (replaced or mistyped).", 404);
+    // only GET and POST act: a HEAD or OPTIONS (a preview, a prefetch) does nothing
+    if (req.method !== "GET" && req.method !== "POST")
+      return new Response(null, {status: 405, headers: {...H, allow: "GET, POST"}});
+    const id = await agentOfLink(env, await digest(parts[1]));
+    if (!id) return (await missed(env, req)) || text("That link doesn't work (replaced or mistyped).", 404);
+    const ag = {id};
     const base = `${url.origin}/a/${parts[1]}`, verb = parts[2] || "page";
     if (!["page", "find", "reach", "invite", "accept", "decline", "say", "cut"].includes(verb))
       return text("Unknown address. Open your page: " + base, 404);
@@ -1706,6 +1836,7 @@ async function route(req, env) {
   }
   if (parts[0] === "i" && SECRET_RE.test(parts[1] || "") && req.method === "GET")
     return getInvite(req, env, parts[1]);
+  if (parts[0] === "i" && req.method === "HEAD") return new Response(null, {status: 405, headers: H});
   if (parts[0] === "o" && SECRET_RE.test(parts[1] || "")) {
     // a private page link from before Clerk: signed in, it moves that account to this sign-in
     const ses = await sessionOf(env, req);

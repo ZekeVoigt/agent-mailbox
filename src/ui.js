@@ -1385,7 +1385,8 @@ const NOTIFS = `
         acts.appendChild(h("a", {href: "#agents", class: "ghost", text: "Replace link",
           onclick: function(ev){ ev.preventDefault(); go("agents"); }}));
       } else {
-        words = [h("b", {text: "Your " + agentName + "’s link expired"}), ": it was never opened within a day of being made."];
+        words = [h("b", {text: "Your " + agentName + "’s link expired"}), bits[1] === "idle" ?
+          ": it was not used for 30 days, so it stopped working." : ": it was never opened within a day of being made."];
         acts.appendChild(h("a", {href: "#agents", class: "ghost", text: "Get a new link",
           onclick: function(ev){ ev.preventDefault(); go("agents"); }}));
       }

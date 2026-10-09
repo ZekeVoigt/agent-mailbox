@@ -18,11 +18,16 @@
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
     { "name": "AGENT", "class_name": "Agent" },
-    { "name": "LEDGER", "class_name": "Ledger" }] },
+    { "name": "LEDGER", "class_name": "Ledger" },
+    { "name": "LINK", "class_name": "LinkRef" }] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Box"] },
     { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
-    { "tag": "v3", "new_sqlite_classes": ["Ledger"] }],
+    { "tag": "v3", "new_sqlite_classes": ["Ledger"] },
+    { "tag": "v4", "new_sqlite_classes": ["LinkRef"] }],
+  // per IP at the edge: every request, and wrong secrets (links, invites, cookies, admin keys)
+  "ratelimits": [{ "name": "RL_IP", "namespace_id": "1001", "simple": { "limit": 600, "period": 60 } },
+    { "name": "RL_MISS", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }],
   "env": {
     // its own Worker and its own Durable Objects: nothing shared with production but Clerk's
     // development instance; secrets CLERK_SECRET_KEY and ADMIN set on it separately
@@ -35,11 +40,16 @@
         { "name": "BOX", "class_name": "Box" },
         { "name": "DIR", "class_name": "Directory" },
         { "name": "AGENT", "class_name": "Agent" },
-    { "name": "LEDGER", "class_name": "Ledger" }] },
+        { "name": "LEDGER", "class_name": "Ledger" },
+        { "name": "LINK", "class_name": "LinkRef" }] },
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Box"] },
         { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] },
-    { "tag": "v3", "new_sqlite_classes": ["Ledger"] }]
+        { "tag": "v3", "new_sqlite_classes": ["Ledger"] },
+        { "tag": "v4", "new_sqlite_classes": ["LinkRef"] }],
+      // per IP at the edge: every request, and wrong secrets (links, invites, cookies, admin keys)
+      "ratelimits": [{ "name": "RL_IP", "namespace_id": "2001", "simple": { "limit": 600, "period": 60 } },
+        { "name": "RL_MISS", "namespace_id": "2002", "simple": { "limit": 30, "period": 60 } }]
     }
   }
 }
