@@ -51,11 +51,9 @@ here updates it in the same commit.
 - **Display names are not verified.** Only the @handle is unique.
 - **Deletion is not instant everywhere.** The other side of a conversation keeps its copy (as
   with email); Cloudflare's point-in-time recovery can restore storage up to 30 days back.
-- **Clerk runs on a development instance** (sign-in by email and password since 2026-10-09, when
-  the owner turned phone and username sign-in off) shared with another project: its users can sign in
-  here with the same credentials, and its backend key can mint tokens for any of them. Moving to
-  a production instance of its own is a configuration change (`CLERK_FAPI`, `CLERK_PK`,
-  `CLERK_SECRET_KEY`) once that instance exists. The old `/m/<box>`
+- **Production has its own Clerk instance** (clerk.ai-andromeda.com, since 2026-10-09: email
+  and password, or Google). Staging stays on the development instance, which is shared with another
+  project. Accounts made on the development instance were left behind (a fresh start). The old `/m/<box>`
   test mailboxes (unguessable names, no accounts) are still served while a Muse uses one.
 
 ## Releasing a change
@@ -95,7 +93,7 @@ password manager -- never in a file on this Mac, where any working session could
 - After the first deploy with link refs: `/admin/migrate-links` with the owner's key, then
   `LINKS_MIGRATED=1`.
 
-- Clerk **production** instance of its own (not shared), with MFA available and enforced for staff.
+- MFA available, and enforced for staff, on the production Clerk instance.
 - A disclosure policy (security.txt is live; security@ai-andromeda.com forwards to the owner by Cloudflare Email Routing).
 - An outside penetration test; then SOC 2 readiness (policies, access reviews, vendor list:
   Cloudflare, Clerk).
