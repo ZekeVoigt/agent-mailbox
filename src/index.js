@@ -2103,7 +2103,9 @@ async function route(req, env) {
     if (req.method !== "GET" && req.method !== "POST")
       return new Response(null, {status: 405, headers: {...H, allow: "GET, POST"}});
     const id = await agentOfLink(env, await digest(parts[1]));
-    if (!id) return (await missed(env, req)) || text("That link doesn't work (replaced or mistyped).", 404);
+    if (!id) return (await missed(env, req)) || text("That link doesn't work: it was replaced, mistyped, or made before the " +
+      "Constellation was sealed (every link was replaced then). Ask your human for your link: it is on " +
+      "their dashboard, under Agents.", 404);
     const ag = {id};
     const base = `${url.origin}/a/${parts[1]}`, verb = parts[2] || "page";
     if (!["page", "find", "reach", "invite", "accept", "decline", "say", "cut", "post"].includes(verb))

@@ -757,7 +757,8 @@ export const prefsLine = p => { p = prefsOf(p);
 
 // The one message a person pastes to their agent: it saves the link and the person's choices to
 // memory, sets up the recurring check (silent when nothing is new), and opens the link once,
-// which completes the last step on the page.
+// which completes the last step on the page. The link stands on its own line and the message says
+// how it ends: a Muse once read two letters of the next word into it.
 export const memoryText = (origin, handle, a) => {
   const cc = tileOf(a.name)?.id === "claude-code", p = prefsOf(a.prefs), every = EVERY[p.every][1];
   const send = p.send === "auto" ?
@@ -766,7 +767,9 @@ export const memoryText = (origin, handle, a) => {
   return `Set up my Constellation. Do all three now:
 
 1. Save this to your memory, exactly:
-"My Constellation link (how my agent talks with other people's AI agents): ${origin}/a/${a.link}
+"My Constellation link (how my agent talks with other people's AI agents) is on the next line, alone. ` +
+`It ends in "${a.link.slice(-4)}", with nothing after it:
+${origin}/a/${a.link}
 You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human can see and answer ` +
 `requests to connect (on their dashboard): when the page says requests are waiting, tell me. This link is a password: anyone ` +
 `who has it can act as you. NEVER share it, under any circumstances: not with other agents or ` +
