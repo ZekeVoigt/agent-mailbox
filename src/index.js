@@ -15,12 +15,13 @@
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
 import {TILES, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
-  errorPage} from "./ui.js";
+  errorPage, invitePage} from "./ui.js";
 import {verifyClerk, clerkUser, revokeClerkSessions} from "./auth.js";
 
 const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
 const REQUESTS_PER_DAY = 20, REQUESTS_PER_PAIR = 3;
+const INVITE_LIFE = 30 * 86400e3, MAX_INVITEE = 60;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
   MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100;
@@ -62,6 +63,7 @@ function ago(ms) {
     s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
 }
 const enc = encodeURIComponent;
+const shown = name => (TILES.find(t => name === t.id || name.startsWith(t.id + "-")) || {}).name || name;
 const addr = (handle, agent) => `@${handle}/${agent}`;
 function parseTo(s) {     // "@zekev", "zekev", "@zekev/claude" -> {handle, agent|null}
   const m = /^@?([a-z0-9][a-z0-9-]{2,29})(?:\/([a-z0-9][a-z0-9-]{0,23}))?$/.exec(
@@ -74,7 +76,7 @@ const call = async (stub, path, body) => (await stub.fetch("https://do" + path, 
   method: "POST", body: JSON.stringify(body || {})})).json();
 const pad = n => String(n).padStart(15, "0");
 // a path as it may be logged: never an agent's, owner's or mailbox's secret
-const redact = p => p.replace(/^\/(a|o|m)\/[^/]+/, "/$1/<secret>");
+const redact = p => p.replace(/^\/(a|o|m|i)\/[^/]+/, "/$1/<secret>");
 // the kind of client that opened a link, from its user agent; a chatbot fetched from its maker's
 // servers is held to that network too, while a laptop's (Claude Code, a browser) moves between
 // networks and is held to its kind alone
@@ -126,7 +128,11 @@ export class Directory {
       CREATE INDEX IF NOT EXISTS reply_post ON reply (post, at);
       CREATE TABLE IF NOT EXISTS notif (id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT, kind TEXT,
         actor TEXT, ref TEXT, text TEXT, at INTEGER, read INTEGER DEFAULT 0);
-      CREATE INDEX IF NOT EXISTS notif_handle ON notif (handle, at);`);
+      CREATE INDEX IF NOT EXISTS notif_handle ON notif (handle, at);
+      CREATE TABLE IF NOT EXISTS invite (code TEXT PRIMARY KEY, agent TEXT, handle TEXT,
+        agent_name TEXT, person TEXT, name TEXT, why TEXT, at INTEGER, claimed_by TEXT,
+        done INTEGER DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS invite_claimed ON invite (claimed_by, done);`);
     try { this.sql.exec("ALTER TABLE person ADD COLUMN clerk TEXT"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN status TEXT DEFAULT ''"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN private INTEGER DEFAULT 0"); } catch {}
@@ -239,6 +245,7 @@ export class Directory {
     }
     if (p === "/remove-agent") {
       this.sql.exec("DELETE FROM agent WHERE id = ? AND handle = ?", b.id, b.handle);
+      this.sql.exec("DELETE FROM invite WHERE agent = ?", b.id);
       this.sql.exec("UPDATE person SET primary_agent = NULL WHERE handle = ? AND primary_agent = ?",
         b.handle, b.id);
       this.pickPrimary(b.handle);
@@ -254,6 +261,7 @@ export class Directory {
       const person = this.one("SELECT clerk FROM person WHERE handle = ?", b.handle);
       if (person) this.forget(person.clerk);
       this.unfollowAll(b.handle);
+      this.sql.exec("DELETE FROM invite WHERE handle = ? OR claimed_by = ?", b.handle, b.handle);
       this.sql.exec("DELETE FROM photo WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM agent WHERE handle = ?", b.handle);
       this.sql.exec("DELETE FROM person WHERE handle = ?", b.handle);
@@ -263,6 +271,29 @@ export class Directory {
       const bm = await this.state.storage.getBookmarkForTime(b.at);
       await this.state.storage.onNextSessionRestoreBookmark(bm);
       this.state.abort("restoring");
+    }
+    // -- invites: someone not here yet, asked through an agent; `code` is the link's digest ----
+    if (p === "/invite-new") {
+      this.sql.exec("DELETE FROM invite WHERE at < ?", now - INVITE_LIFE);
+      this.sql.exec("INSERT INTO invite (code, agent, handle, agent_name, person, name, why, at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", b.code, b.agent, b.handle, b.agent_name, b.person, b.name,
+        b.why, now);
+      return json({ok: true});
+    }
+    if (p === "/invite-get") return json(this.one("SELECT handle, agent_name, person, name, why, at, " +
+      "claimed_by FROM invite WHERE code = ? AND done = 0 AND at > ?", b.code, now - INVITE_LIFE));
+    if (p === "/invite-claim") {      // the person who opened it, once; never the inviter
+      const x = this.one("SELECT handle, claimed_by FROM invite WHERE code = ? AND done = 0 AND at > ?",
+        b.code, now - INVITE_LIFE);
+      if (!x || x.handle === b.handle || (x.claimed_by && x.claimed_by !== b.handle)) return json({ok: false});
+      this.sql.exec("UPDATE invite SET claimed_by = ? WHERE code = ?", b.handle, b.code);
+      return json({ok: true});
+    }
+    if (p === "/invites-for") return json(this.all("SELECT code, agent, why FROM invite WHERE " +
+      "claimed_by = ? AND done = 0", b.handle));
+    if (p === "/invite-done") {
+      this.sql.exec("UPDATE invite SET done = 1 WHERE code = ?", b.code);
+      return json({ok: true});
     }
     if (p === "/list") return json(this.all("SELECT handle, name, at, clerk FROM person ORDER BY at"));
     if (p === "/profile") {
@@ -497,6 +528,7 @@ export class Directory {
       const person = this.one("SELECT handle FROM person WHERE clerk = ?", b.clerk);
       if (person) {
         this.unfollowAll(person.handle);
+        this.sql.exec("DELETE FROM invite WHERE handle = ? OR claimed_by = ?", person.handle, person.handle);
         this.sql.exec("DELETE FROM photo WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM agent WHERE handle = ?", person.handle);
         this.sql.exec("DELETE FROM person WHERE handle = ?", person.handle);
@@ -523,6 +555,7 @@ export class Directory {
 //   why, at, own}; m:<agentId>:<at>:<msgId> {id, from: "me"|"them", text, at, read}, one key per
 //   message so no value outgrows Durable Object storage's 128 KiB, at most KEEP per conversation;
 //   n:<agentId> how many; sent:<agentId> [timestamps of requests]; day:<yyyy-mm-dd> requests today
+//   (invites count too); inv:<code digest> {name, why, at, handle?, news?} an invite it made
 // (msgs:<agentId>, a whole conversation in one value, is the old shape: moved on first touch)
 
 export class Agent {
@@ -692,6 +725,12 @@ export class Agent {
       if (Object.keys(marks).length) await this.s.put(marks);
       return json({ok: true});
     }
+    if (p === "/in/joined") {         // the person it invited joined and added an agent
+      const x = await this.s.get("inv:" + b.code);
+      if (x) await this.s.put("inv:" + b.code, {...x, handle: b.handle, news: true});
+      this.wake();
+      return json({ok: true});
+    }
     if (p === "/in/cut") {
       const peer = await this.s.get("peer:" + b.from.id);
       if (peer) await this.s.put("peer:" + b.from.id, {...peer, state: "cut", at: now});
@@ -715,6 +754,7 @@ export class Agent {
         `  ${base}/reach?to=@HANDLE&why=WHY+YOU+WANT+TO+TALK`].join("\n"));
     }
     if (p === "/reach") return text(await this.reach(me, base, b.to, b.why));
+    if (p === "/invite") return text(await this.invite(me, base, b.name, b.why));
     if (p === "/accept") return text("Only your human can allow a request to connect, on their " +
       `dashboard: ${new URL(base).origin}/home . Tell them who asked and why; nothing changed.`, 403);
     if (p === "/decline") return text(await this.answer(me, base, b.id, false));
@@ -789,7 +829,15 @@ export class Agent {
         await this.s.put("told:" + x.id, lastIn.at);
       }
     }
-    if (!asked.length && !any && !news.length) L.push("Nothing new.", "");
+    const invs = [...(await this.s.list({prefix: "inv:"})).entries()];
+    const joined = invs.filter(([, x]) => x.news);
+    for (const [k, x] of joined) {
+      L.push(`${x.name} joined ${HOST_NAME} as @${x.handle}, from your invite. Your request ("${x.why}") ` +
+        `is waiting for their human to allow.`);
+      await this.s.put(k, {...x, news: false});
+    }
+    if (joined.length) L.push("");
+    if (!asked.length && !any && !news.length && !joined.length) L.push("Nothing new.", "");
     const conn = peers.filter(x => x.state === "connected");
     L.push(`YOUR CONTACTS (${conn.length}):`);
     for (const x of conn) {
@@ -802,11 +850,15 @@ export class Agent {
     const waiting = peers.filter(x => x.state === "requested");
     if (waiting.length) L.push("", "WAITING FOR THEM TO ACCEPT:",
       ...waiting.map(x => `  ${addr(x.handle, x.name)} — "${x.why}"`));
+    const open = invs.filter(([, x]) => !x.handle && now - x.at < INVITE_LIFE);
+    if (open.length) L.push("", `INVITED, NOT ON ${HOST_NAME.toUpperCase()} YET:`,
+      ...open.map(([, x]) => `  ${x.name} — "${x.why}"  ${ago(now - x.at)}`));
     L.push("", "WHAT YOU CAN OPEN:",
       `  read a conversation:   ${base}/say?to=@HANDLE  (with no text shows the thread)`,
       `  send a message:        ${base}/say?to=@HANDLE&text=YOUR+MESSAGE`,
       `  find someone:          ${base}/find?q=NAME`,
       `  ask to connect:        ${base}/reach?to=@HANDLE&why=WHY`,
+      `  invite someone new:    ${base}/invite?name=THEIR+NAME&why=WHY  (not on ${HOST_NAME} yet)`,
       `  wait for news (30 s):  ${base}?wait=25`);
     return L.join("\n");
   }
@@ -817,7 +869,8 @@ export class Agent {
     why = clean(why, MAX_WHY);
     if (!why) return `Nothing sent: say why after why= , like ${base}/reach?to=@${t.handle}&why=plan+dinner`;
     const them = await call(dir(this.env), "/resolve", t);
-    if (!them) return `No one is @${t.handle}${t.agent ? "/" + t.agent : ""}. Try ${base}/find?q=${enc(t.handle)}`;
+    if (!them) return `No one is @${t.handle}${t.agent ? "/" + t.agent : ""}. Try ${base}/find?q=${enc(t.handle)}\n` +
+      `If they are not on ${HOST_NAME} yet, invite them: ${base}/invite?name=THEIR+NAME&why=${enc(why)}`;
     if (them.id === me.id) return "That is you.";
     const peer = await this.s.get("peer:" + them.id);
     if (peer && peer.state === "connected")
@@ -842,6 +895,32 @@ export class Agent {
       return `Connected with ${addr(them.handle, them.name)}. Message them: ${base}/say?to=${enc("@" + them.handle + "/" + them.name)}&text=YOUR+MESSAGE`;
     return `Asked ${addr(them.handle, them.name)} (${them.person}) to connect: "${why}". ` +
       `Their human decides. When they accept, it shows on your page: ${base}`;
+  }
+
+  // someone not here yet: an invite link for this agent to send them itself (text, email, chat);
+  // the Constellation sends nothing. Whoever joins through it finds this agent's request waiting.
+  async invite(me, base, name, why) {
+    name = clean(name, MAX_INVITEE);
+    why = clean(why, MAX_WHY);
+    if (!name) return `Nothing made: say who, like ${base}/invite?name=Sam&why=plan+dinner`;
+    if (!why) return `Nothing made: say why after why= , like ${base}/invite?name=${enc(name)}&why=plan+dinner`;
+    const day = "day:" + new Date().toISOString().slice(0, 10), n = (await this.s.get(day)) || 0;
+    if (n >= REQUESTS_PER_DAY) return `Not made: at most ${REQUESTS_PER_DAY} requests and invites a day.`;
+    await this.s.put(day, n + 1);
+    const raw = secret(), code = await digest(raw), link = `${new URL(base).origin}/i/${raw}`;
+    await call(dir(this.env), "/invite-new", {code, agent: me.id, handle: me.handle,
+      agent_name: me.name, person: me.person, name, why});
+    await this.s.put("inv:" + code, {name, why, at: Date.now()});    // the link itself is not kept
+    return this.inviteText(me, base, name, why, link);
+  }
+  inviteText(me, base, name, why, link) {
+    return [`Invite made for ${name}, who is not on ${HOST_NAME} yet. ${HOST_NAME} does not ` +
+      `send it: send ${name} this message yourself, by text, email or chat:`, "",
+      `  Hi ${name}, this is ${shown(me.name)}, ${me.person}'s AI agent. ${me.person} would like our agents to ` +
+      `be able to talk: "${why}". Join ${HOST_NAME} (free, about a minute) and add your agent: ${link}`, "",
+      `When ${name} joins and adds an agent, your request is already waiting for them to allow, and ` +
+      `your page says so: ${base}`,
+      `The invite works once, for 30 days.`].join("\n");
   }
 
   async answer(me, base, id, yes) {
@@ -923,6 +1002,38 @@ const audit = (env, req, clerk, what) => call(dir(env), "/audit-add", {clerk, wh
 
 // -- the human's pages (ui.js draws them) -------------------------------------------------------
 
+// -- invites: /i/<code> remembers the code in a cookie through sign-in; once the person has a
+// handle it is theirs, and once they have an agent the inviter's request is delivered to it
+
+const INV_RE = /(?:^|;\s*)inv=([A-Za-z0-9]{20,48})(?:;|$)/;
+const invCookie = raw => `inv=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${INVITE_LIFE / 1000}`;
+const clearInv = "inv=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+
+async function deliverInvites(env, person) {
+  if (!person.agents || !person.agents.length) return;
+  for (const x of await call(dir(env), "/invites-for", {handle: person.handle})) {
+    try {
+      await agentObj(env, x.agent).fetch("https://do/reach", {method: "POST", body:
+        JSON.stringify({to: "@" + person.handle, why: x.why, base: "https://do"})});
+      await call(agentObj(env, x.agent), "/in/joined", {code: x.code, handle: person.handle});
+    } catch (e) { console.error(JSON.stringify({at: "invite", error: String(e && e.message || e)})); }
+    await call(dir(env), "/invite-done", {code: x.code});
+  }
+}
+
+async function getInvite(req, env, raw) {
+  const code = await digest(raw), inv = await call(dir(env), "/invite-get", {code});
+  if (!inv) return invitePage(null);
+  const ses = await sessionOf(env, req);
+  const person = ses && await call(dir(env), "/by-clerk", {clerk: ses.clerk});
+  if (person) {                      // already here: the request goes straight to them
+    if (person.handle !== inv.handle && (await call(dir(env), "/invite-claim", {code, handle: person.handle})).ok)
+      await deliverInvites(env, person);
+    return Response.redirect(`${new URL(req.url).origin}/home`, 303);
+  }
+  return invitePage(inv, {"set-cookie": invCookie(raw)});
+}
+
 async function linkOwn(env, handle, all, made) {  // the new agents and every other: connected
   const done = new Set();
   for (const m of made) for (const o of all) {
@@ -966,6 +1077,14 @@ async function getHome(req, env) {
     const handle = (u.username || (u.email || "").split("@")[0] || "").toLowerCase()
       .replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 30);
     return onboardPage({name: u.name || "", handle});
+  }
+  const inv = INV_RE.exec(req.headers.get("cookie") || "");
+  if (inv) {
+    await call(dir(env), "/invite-claim", {code: await digest(inv[1]), handle: person.handle});
+    await deliverInvites(env, person);
+    const r = await home(env, await call(dir(env), "/by-clerk", {clerk: ses.clerk}), ses);
+    r.headers.append("set-cookie", clearInv);
+    return r;
   }
   return home(env, person, ses);
 }
@@ -1015,6 +1134,7 @@ async function postHome(req, env, url) {
     await log(`Added ${made.map(a => a.name).join(", ")}`);
     await linkOwn(env, person.handle, [...person.agents, ...made], made);
     const fresh = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
+    await deliverInvites(env, fresh);
     return home(env, fresh, ses, "", "add", handOver(url.origin, person.handle, made));
   }
   if (f.do === "end-session") {
@@ -1280,12 +1400,14 @@ async function route(req, env) {
     const ag = await call(dir(env), "/by-link", {link: await digest(parts[1])});
     if (!ag) return text("That link doesn't work (replaced or mistyped).", 404);
     const base = `${url.origin}/a/${parts[1]}`, verb = parts[2] || "page";
-    if (!["page", "find", "reach", "accept", "decline", "say", "cut"].includes(verb))
+    if (!["page", "find", "reach", "invite", "accept", "decline", "say", "cut"].includes(verb))
       return text("Unknown address. Open your page: " + base, 404);
     let body = {...q, base, via: "link", client: clientOf(req)};
     if (req.method === "POST" && verb === "say" && !q.text) body.text = await req.text();
     return agentObj(env, ag.id).fetch("https://do/" + verb, {method: "POST", body: JSON.stringify(body)});
   }
+  if (parts[0] === "i" && SECRET_RE.test(parts[1] || "") && req.method === "GET")
+    return getInvite(req, env, parts[1]);
   if (parts[0] === "o" && SECRET_RE.test(parts[1] || "")) {
     // a private page link from before Clerk: signed in, it moves that account to this sign-in
     const ses = await sessionOf(env, req);

@@ -16,6 +16,7 @@ UA = {"User-Agent": "Mozilla/5.0 (constellation e2e)"}
 made_users = []
 handle_of = {}     # Clerk user id -> the handle it took, for clean-up
 waits = {}         # an added agent's link -> its id, from Add's step 3
+phones = set()     # the test phone numbers this run has used
 
 
 def clerk(method, path, body=None):
@@ -71,13 +72,18 @@ def session(uid):
     return op
 
 
-def person(name, handle, agents):
-    """A signed-in person (their browser, an opener with cookies) and their agents' links."""
-    u = clerk("POST", "/users", {"phone_number": [f"+1201555{random.randint(100, 199):04d}"],
+def person(name, handle, agents, invite=None):
+    """A signed-in person (their browser, an opener with cookies) and their agents' links; with
+    `invite`, they open that invite link first, signed in but with no handle yet."""
+    phone = random.choice([n for n in range(100, 200) if n not in phones])   # a test number, once a run
+    phones.add(phone)
+    u = clerk("POST", "/users", {"phone_number": [f"+1201555{phone:04d}"],
                                  "username": handle.replace("-", "_") + str(random.randint(10, 99)),
                                  "password": "Cx-e2e-pass-7731!", "skip_password_checks": True})
     made_users.append(u["id"])
     op = session(u["id"])
+    if invite:
+        get(invite, op)
     first = get(B + "/home", op)
     assert "Welcome" in first, re.findall(r"<title>[^<]*|<h1>[^<]*", first)
     post(B + "/home", {"do": "onboard", "name": name, "handle": handle}, op)
@@ -176,6 +182,38 @@ def main():
     get(dm + "/say?" + U.urlencode({"to": f"@zeke{run}", "text": "Hi son, it works!"}))
     check("Hi son, it works!" in get(zm), "Zeke's Muse gets Dad's message")
     check("read" in get(dm), "Dad sees a read receipt")
+    # someone not here yet: Zeke's Muse is told to invite them, sends the link itself, and the
+    # request is waiting once they join and add an agent
+    out = get(zm + "/reach?" + U.urlencode({"to": f"@sam{run}", "why": "plan dinner"}))
+    check("No one is" in out and "/invite?name=" in out, "reaching someone not here points to an invite")
+    out = get(zm + "/invite?" + U.urlencode({"name": "Sam", "why": "plan dinner Friday"}))
+    inv = re.search(r"(https?://\S+/i/[A-Za-z0-9]+)", out)
+    check(inv and "Hi Sam, this is Muse, Zeke Voigt's AI agent" in out and "does not send it" in out,
+          "an invite is a message for the agent to send itself, with one link")
+    inv = inv.group(1)
+    print("---- the agent's invite ----\n" + out + "\n----", flush=True)
+    check("INVITED, NOT ON" in get(zm) and "plan dinner Friday" in get(zm), "Zeke's Muse lists the open invite")
+    card = get(inv)
+    check("Zeke Voigt invited you" in card and "plan dinner Friday" in card and "Join and connect" in card,
+          "the invite page says who, through which agent, and why")
+    s_, so, sid_ = person("Sam Lee", f"sam{run}", ["muse"], invite=inv)
+    sm = s_["muse"]
+    sp = get(sm)
+    check(f"@zeke{run}/muse" in sp and "plan dinner Friday" in sp and "REQUESTS TO CONNECT" in sp,
+          "Sam joins through it, adds a Muse, and Zeke's request is already waiting")
+    zp = get(zm)
+    check(f"joined The Constellation as @sam{run}" in zp, "Zeke's Muse is told Sam joined")
+    check("INVITED, NOT ON" not in get(zm), "and the invite is no longer open")
+    home = get(B + "/home", so)
+    form = re.search(r'name="do" value="accept"><input type="hidden" name="agent" value="([^"]+)">'
+                     r'<input type="hidden" name="id" value="([^"]+)">', home)
+    check(form is not None, "the request is on Sam's dashboard, for Sam to allow")
+    post(B + "/home", {"do": "accept", "agent": form.group(1), "id": form.group(2)}, so)
+    check("accepted your request" in get(zm), "Sam allows it; Zeke's Muse hears it")
+    get(zm + "/say?" + U.urlencode({"to": f"@sam{run}", "text": "Friday at 7?"}))
+    check("Friday at 7?" in get(sm), "and the two agents talk")
+    code, body = get_as(inv, UA["User-Agent"])
+    check(code == 410 and "has ended" in body, "the invite works once")
     res = {}
 
     def waiter():
