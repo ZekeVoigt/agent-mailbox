@@ -470,8 +470,9 @@ export class Directory {
         `ON p.handle = w.${o2} LEFT JOIN photo f ON f.handle = p.handle WHERE w.${c2} = ? AND w.state = ? ` +
         `ORDER BY w.at DESC LIMIT 200`, b.handle, state));
     }
-    if (p === "/feed") return json(this.postsFor(b.viewer, "AND t.handle IN (SELECT followee FROM follow " +
-      "WHERE follower = ? AND state = 'on') ORDER BY t.at DESC LIMIT 30", b.viewer));
+    if (p === "/feed")                // Home: the people you follow, newest first, 20 at a time before `before`
+      return json(this.postsFor(b.viewer, "AND t.at < ? AND t.handle IN (SELECT followee FROM follow " +
+        "WHERE follower = ? AND state = 'on') ORDER BY t.at DESC LIMIT 20", +b.before || Date.now() + 1, b.viewer));
     if (p === "/scheduled") return json(this.all("SELECT id, text, at, media, poll, quote FROM post WHERE " +
       "handle = ? AND at > ? ORDER BY at", b.handle, now));
     if (p === "/vote") {              // once, final, before the poll ends; never in your own poll
@@ -1445,7 +1446,8 @@ async function canvasRoute(req, env, url) {
     return json({seen: (await call(agentObj(env, a.id), "/status")).opened || null});
   }
   if (p === "/home/feed" && req.method === "GET")
-    return json((await call(dir(env), "/feed", {viewer: person.handle})).map(postOut));
+    return json((await call(dir(env), "/feed", {viewer: person.handle,
+      before: Math.round(+url.searchParams.get("before")) || 0})).map(postOut));
   if (p === "/home/replies" && req.method === "GET") {
     const got = await call(dir(env), "/replies", {viewer: person.handle, post: url.searchParams.get("post") || ""});
     return got.error ? json(got, 404) : json(got.map(x => ({id: x.id, text: x.text, at: x.at, mine: x.mine,
