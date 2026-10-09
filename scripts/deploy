@@ -17,7 +17,8 @@
 # can lag a deploy by seconds, so a deploy made just before this one could have been missed by the
 # check -- then this says so, loudly, with how to undo it.
 #
-# Needs: CLERK_SECRET_KEY and ADMIN (the target's support key) for the e2e; unset
+# Needs: CLERK_SECRET_KEY for the e2e (ADMIN, and staging's ADMIN_OWNER, are read from
+# ~/.config/constellation/ when not set); unset
 # CLOUDFLARE_API_TOKEN (wrangler login). DEPLOY_CONFIG / DEPLOY_URL point it at another worker
 # (its test, test/deploy.test.sh), with no --env.
 set -eu
@@ -31,6 +32,11 @@ esac
 config=${DEPLOY_CONFIG:-wrangler.jsonc}
 if [ -n "${DEPLOY_CONFIG:-}" ]; then env_flag=""; url=${DEPLOY_URL:?DEPLOY_URL with DEPLOY_CONFIG}; fi
 unset CLOUDFLARE_API_TOKEN
+# the support and (staging) owner keys live in ~/.config/constellation/, never in a session's files
+keys="$HOME/.config/constellation"
+[ -z "${ADMIN:-}" ] && [ -f "$keys/$target-admin" ] && ADMIN=$(cat "$keys/$target-admin") && export ADMIN
+[ "$target" = staging ] && [ -z "${ADMIN_OWNER:-}" ] && [ -f "$keys/staging-owner" ] &&
+  ADMIN_OWNER=$(cat "$keys/staging-owner") && export ADMIN_OWNER
 wr() { npx wrangler "$@" -c "$config" $env_flag; }
 refuse() { echo "deploy refused: $*" >&2; exit 1; }
 
