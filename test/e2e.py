@@ -11,6 +11,8 @@ import html, http.cookiejar, json, os, random, re, sys, threading, time
 import urllib.parse as U, urllib.request as R
 
 B = sys.argv[1].rstrip("/")
+# a test deployment (staging, or E2E_TEST_SITE=1 for a private one): links are enforced, notices safe
+TEST_SITE = "staging" in B or os.environ.get("E2E_TEST_SITE") == "1"
 KEY = os.environ["CLERK_SECRET_KEY"]
 UA = {"User-Agent": "Mozilla/5.0 (constellation e2e)"}
 made_users = []
@@ -88,7 +90,10 @@ def person(name, handle, agents, invite=None):
     assert "Welcome" in first, re.findall(r"<title>[^<]*|<h1>[^<]*", first)
     post(B + "/home", {"do": "onboard", "name": name, "handle": handle}, op)
     handle_of[u["id"]] = handle
-    page = post(B + "/home", {"do": "add", "agent": agents}, op)
+    refused_add = post(B + "/home", {"do": "add", "agent": agents}, op)
+    assert "Nothing was added" in refused_add and "data-wait=" not in refused_add, \
+        "Add without the person's own choices adds nothing"
+    page = post(B + "/home", {"do": "add", "agent": agents, "send": "ask", "every": "5m"}, op)
     names = list(dict.fromkeys(re.findall(r"You are @[a-z0-9-]+/([a-z0-9-]+)\.", page)))
     assert "NEVER share it, under any circumstances" in page, "the setup message guards the link"
     assert "a[href=\"#add\"]" in page and "a.click()" in page and "data-wait=" in page, \
@@ -96,7 +101,7 @@ def person(name, handle, agents, invite=None):
     links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
     assert names and len(names) == len(set(links)), (re.findall(r"<h1>[^<]*|class=\"err\">[^<]*|class=\"low\">[^<]*|class=\"note\">.{0,200}", page), names, links)
     assert "every 5 minutes" in html.unescape(page) and "wait for my OK" in html.unescape(page), \
-        "by default an agent checks every 5 minutes and asks before sending"
+        "the message carries the choices made"
     for link, wid in zip(links, re.findall(r'data-wait="([^"]+)"', page)):
         waits[link] = wid
     return dict(zip(names, links)), op, u["id"]
@@ -154,7 +159,7 @@ def main():
     check(seen(), "and flips the moment the agent opens its link")
     check("never give it to anyone" in p, "every page reminds the agent its link is a password")
     # the link is locked to the app that first opened it (here, this script's browser user agent)
-    enforce = "staging" in B
+    enforce = TEST_SITE
     code, body = get_as(zm, "curl/8.7.1")
     check(code == 403 and "locked" in body if enforce else code == 200,
           "another app opening the link is " + ("refused" if enforce else "let through (watch mode)"))
@@ -247,7 +252,7 @@ def main():
     s2, s2o, _ = person("Stranger Two", f"str{run}", ["muse"])
     # a link never opened expires after a day (aged by the operator here), and the human is told
     if os.environ.get("ADMIN"):
-        page = post(B + "/home", {"do": "add", "agent": ["muse"]}, zo)
+        page = post(B + "/home", {"do": "add", "agent": ["muse"], "send": "ask", "every": "5m"}, zo)
         newlink = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)[0]
         waits[newlink] = re.findall(r'data-wait="([^"]+)"', page)[0]
         R.urlopen(R.Request(B + "/admin/age-link", json.dumps({"handle": f"zeke{run}", "id": waits[newlink]}).encode(),
@@ -259,7 +264,7 @@ def main():
         check("Get a new link" in home, "Agents offers a new link for it")
         fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
         check(get_as(fresh, UA["User-Agent"])[0] == 200, "the new link works")
-        if "staging" in B:            # a notice reaches every account: never from a test on production
+        if TEST_SITE:                 # a notice reaches every account: never from a test on production
           R.urlopen(R.Request(B + "/admin/notice", json.dumps({"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}).encode(),
                             headers={**UA, "x-admin": os.environ["ADMIN"]}), timeout=20).read()
           nt = [n for n in json.loads(get(B + "/home/notifs", s2o)) if n["kind"] == "notice"]

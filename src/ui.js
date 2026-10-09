@@ -169,6 +169,8 @@ fieldset.choice.every{grid-template-columns:repeat(3,1fr)}
 fieldset.choice.every label{justify-content:center;padding:10px 8px;font-size:13.5px;text-align:center}
 .setup .hint{margin:-4px 0 0;font-size:12.5px;color:var(--dim)}
 .setup button.getmsg{width:auto;margin:0 0 0 44px;padding:11px 22px;font-size:14px}
+.setup button.getmsg:disabled{opacity:.4;cursor:not-allowed}
+.setup p.left{margin:8px 0 0 44px;font-size:12.5px;color:var(--dim)}
 @media (max-width:520px){fieldset.choice{grid-template-columns:1fr}fieldset.choice.every{grid-template-columns:repeat(3,1fr)}
 .setup button.getmsg{width:calc(100% - 44px)}}
 ol.steps .paste .go{width:100%;margin:10px 0 0;padding:12px;font-size:14px}
@@ -453,20 +455,21 @@ You are @${handle}/${a.name}. Check this link ${every}. ${send} Only my human ca
 // 4. it opens its link: done.
 
 const choices = () => `<fieldset class="choice"><legend>Can it send messages without asking you?</legend>${
-  Object.entries(SEND).map(([k, [t, d]], i) => `<label><input type="radio" name="send" value="${k}"${
-    i ? "" : " checked"}><span><b>${esc(t)}</b><small>${esc(d)}</small></span></label>`).join("")}</fieldset>
+  Object.entries(SEND).map(([k, [t, d]]) => `<label><input type="radio" name="send" value="${k}" required>` +
+    `<span><b>${esc(t)}</b><small>${esc(d)}</small></span></label>`).join("")}</fieldset>
 <fieldset class="choice every"><legend>How often should it check for new messages?</legend>${
-  Object.entries(EVERY).map(([k, [t]]) => `<label><input type="radio" name="every" value="${k}"${
-    k === "5m" ? " checked" : ""}><span>${esc(t)}</span></label>`).join("")}</fieldset>
+  Object.entries(EVERY).map(([k, [t]]) => `<label><input type="radio" name="every" value="${k}" required>` +
+    `<span>${esc(t)}</span></label>`).join("")}</fieldset>
 <p class="hint">You can change both any time by asking your agent.</p>`;
 
 const pickAgent = () => `<form method="post" action="/home" class="setup">${hidden({do: "add"})}
 <ol class="steps"><li class="now"><h2>Pick your agent</h2><div class="pick">${TILES.map((t, i) =>
-  `<label><input type="radio" name="agent" value="${t.id}" required${i ? "" : " checked"}>${MARKS[t.id]}<span>${
+  `<label><input type="radio" name="agent" value="${t.id}" required>${MARKS[t.id]}<span>${
     esc(t.name)}<small>${esc(t.note)}</small></span></label>`).join("")}</div></li>
 <li class="now"><h2>Choose how it works</h2>${choices()}</li>
 <li><h2>Paste one message to it</h2></li><li><h2>It connects</h2></li></ol>
-<button class="getmsg">Get the message</button></form>`;
+<button class="getmsg" disabled>Get the message</button><p class="left">Choose your agent, whether it may ` +
+`send without asking, and how often it checks.</p></form>`;
 
 /** Steps 2 and 3 for agents just added (or given a fresh link): the message, and the live wait. */
 export const handOver = (origin, handle, list, fresh = false) => `<ol class="steps">` +
@@ -703,7 +706,7 @@ ${v === "connections" ? "" : `<h1>${t}</h1><p>${d}</p>`}${v === first && note ? 
   var a = document.querySelector('.nav a[href="' + location.hash + '"]'); if (a) a.click(); });`;
   return page(`@${person.handle}`, `<div class="shell" data-start="${first}"><nav class="nav"
 aria-label="Dashboard"><div>${top}</div><div>${bottom}</div></nav><div class="main">${main}</div></div>`,
-    {kind: "start", step: "done", wide: true, frameScript: force + BOARD + WAIT + NOTIFS});
+    {kind: "start", step: "done", wide: true, frameScript: force + BOARD + WAIT + NOTIFS + SETUP});
 }
 
 // -- the board: a person's profile in the canvas's panel, and the search pill's live suggestions --
@@ -1008,6 +1011,18 @@ const BOARD = `
     e.preventDefault(); e.stopPropagation();
     if (sel >= 0) choose(sel);
   }, true);
+})();`;
+
+// Add's choices: nothing is chosen for the person; Get the message waits for all three
+const SETUP = `
+(function(){
+  var f = document.querySelector("form.setup"); if (!f) return;
+  var b = f.querySelector("button.getmsg"), left = f.querySelector("p.left");
+  var sync = function(){
+    var miss = ["agent", "send", "every"].filter(function(n){ return !f.querySelector("input[name=" + n + "]:checked"); });
+    b.disabled = miss.length > 0; left.hidden = !miss.length;
+  };
+  f.addEventListener("change", sync); sync();
 })();`;
 
 // step 3 of Add: each waiting agent flips to connected the moment it first opens its link
