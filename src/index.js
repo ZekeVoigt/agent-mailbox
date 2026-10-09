@@ -33,6 +33,8 @@ const IMAGE_MAX = 8e6, VIDEO_MAX = 90e6, UPLOADS_PER_HOUR = 60, MEDIA_ID = /^[A-
 // ahead, 20 waiting), and GIFs found through GIPHY (GIPHY_KEY), each kept in R2 as a looping MP4
 const POLL_HOURS = [1, 24, 72, 168], MAX_CHOICE = 25, SCHEDULE_MAX_MS = 30 * 86400e3, MAX_SCHEDULED = 20,
   GIF_MAX = 15e6, GIFS_PER_HOUR = 300;
+// an upload no post carries: at most UNPOSTED_MAX a person at once, erased a day after it was made
+const UNPOSTED_MAX = 12, UNPOSTED_LIFE = 86400e3;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -614,6 +616,16 @@ export class Directory {
       return json({ok: true, media});
     }
     if (p === "/can-see") return json({ok: this.canSee(b.viewer, b.handle)});
+    if (p === "/media-used") {        // handle -> the media ids its posts carry, scheduled ones too
+      const out = {};
+      for (const h of (b.handles || []).slice(0, 500)) {
+        out[h] = [];
+        for (const x of this.all("SELECT media FROM post WHERE handle = ? AND media != '[]'", h)) {
+          try { for (const m of JSON.parse(x.media)) out[h].push(m.id); } catch {}
+        }
+      }
+      return json(out);
+    }
     if (p === "/status-set") {
       this.sql.exec("UPDATE person SET status = ? WHERE handle = ?", b.status, b.handle);
       return json({ok: true});
@@ -1265,6 +1277,31 @@ async function getHome(req, env) {
   return home(env, person, ses);
 }
 
+// uploads no post carries: `handle`'s (for the cap), or everyone's older than a day (the sweep)
+async function unposted(env, handle = "") {
+  const objs = [];
+  let cursor;
+  do {
+    const got = await env.MEDIA.list({prefix: handle ? `m/${handle}/` : "m/", cursor, limit: 1000});
+    objs.push(...got.objects);
+    cursor = got.truncated && objs.length < 20000 ? got.cursor : undefined;
+  } while (cursor);
+  const by = {};
+  for (const o of objs) {
+    const [, h, id] = o.key.split("/");
+    (by[h] = by[h] || []).push({key: o.key, id, at: o.uploaded.getTime()});
+  }
+  const used = Object.keys(by).length ? await call(dir(env), "/media-used", {handles: Object.keys(by)}) : {};
+  return Object.entries(by).flatMap(([h, xs]) => xs.filter(x => !(used[h] || []).includes(x.id)));
+}
+
+async function sweepMedia(env) {     // hourly: an upload never posted is erased a day after
+  const life = env.UNPOSTED_LIFE_S ? +env.UNPOSTED_LIFE_S * 1000 : UNPOSTED_LIFE;   // a test sets it shorter
+  const old = (await unposted(env)).filter(x => x.at < Date.now() - life).map(x => x.key);
+  for (let i = 0; i < old.length; i += 1000) await env.MEDIA.delete(old.slice(i, i + 1000));
+  if (old.length) console.log(JSON.stringify({at: "media-sweep", erased: old.length}));
+}
+
 async function eraseMedia(env, handle) {  // every photo and video a person posted
   let cursor;
   do {
@@ -1536,6 +1573,8 @@ async function canvasRoute(req, env, url) {
       return json({error: k === "v" ? "A video is at most 90 MB." : "A photo is at most 8 MB."}, 413);
     if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "media", most: UPLOADS_PER_HOUR})).ok)
       return json({error: "Too many uploads: try again in an hour."}, 429);
+    if ((await unposted(env, person.handle)).length >= UNPOSTED_MAX)
+      return json({error: "Post or remove what you've added before adding more."}, 429);
     const id = secret(16);
     const num = v => String(Math.max(0, Math.min(20000, Math.round(+v || 0))));
     try {
@@ -1803,6 +1842,9 @@ export default {
       return /^\/(a|m)\//.test(path) ? text("Something went wrong on our side. Try again in a minute.", 500)
         : errorPage();
     }
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(sweepMedia(env).catch(e => console.error(JSON.stringify({at: "media-sweep", error: String(e)}))));
   },
 };
 
