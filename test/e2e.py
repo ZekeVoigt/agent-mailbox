@@ -355,7 +355,7 @@ def main():
                and n["text"].endswith("|idle")], "and Activity says why")
         fresh = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", post(B + "/home", {"do": "rotate", "agent": waits[newlink]}, zo))[0]
         check(get_as(fresh, UA["User-Agent"])[0] == 200, "Get a new link: the new one works")
-        if TEST_SITE:                 # a notice reaches every account: never from a test on production
+        if TEST_SITE and os.environ.get("ADMIN_OWNER"):   # a notice reaches every account: never on production
           note = {"text": "e2e notice", "link": "https://ai-andromeda.com/terms/"}
           check(admin("notice", note) == 403, "a notice to everyone needs the owner's key: the support key is refused")
           admin("notice", note, os.environ["ADMIN_OWNER"])
