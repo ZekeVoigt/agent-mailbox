@@ -18,6 +18,8 @@
     { "name": "BOX", "class_name": "Box" },
     { "name": "DIR", "class_name": "Directory" },
     { "name": "AGENT", "class_name": "Agent" }] },
+  // posts' photos and videos, private: served only through /home/media to whoever may see the post
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "constellation-media" }],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Box"] },
     { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }],
@@ -33,6 +35,7 @@
         { "name": "BOX", "class_name": "Box" },
         { "name": "DIR", "class_name": "Directory" },
         { "name": "AGENT", "class_name": "Agent" }] },
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "constellation-media-staging" }],
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Box"] },
         { "tag": "v2", "new_sqlite_classes": ["Directory", "Agent"] }]

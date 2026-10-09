@@ -51,7 +51,7 @@ src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}
     "x-content-type-options": "nosniff", ...headers,
     "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src ` +
       `'nonce-${nonce}'${c}${clerk ? " https://challenges.cloudflare.com" : ""}; img-src 'self' ` +
-      `data: blob: https://ai-andromeda.com${clerk ? " https://img.clerk.com" : ""}; connect-src 'self'${c}; ` +
+      `data: blob: https://ai-andromeda.com${clerk ? " https://img.clerk.com" : ""}; media-src 'self' blob:; connect-src 'self'${c}; ` +
       `frame-src${clerk ? " https://challenges.cloudflare.com" : frameScript ? " 'self'" : " 'none'"}; worker-src 'self' blob:; ` +
       `form-action 'self'; base-uri 'none'; frame-ancestors 'none'`}});
 }
@@ -328,14 +328,53 @@ color:var(--ink);text-decoration:none;background:#1f1f1f;border-radius:999px}
 .pedit .row2 button:first-child{color:var(--ink);background:#333}
 .pedit .note{font-size:12.5px;color:#fca5a5}
 .pp button.reqs{margin:0 0 18px}
-.pcompose{display:flex;align-items:flex-start;gap:12px;margin:0 0 22px;padding:14px;background:#141414;border-radius:14px}
-.pcompose .face{width:40px;height:40px;font-size:15px}
-.pcompose .face img{width:100%;height:100%;object-fit:cover}
-.pcompose textarea{flex:1 1 0;width:0;min-width:0;min-height:56px;margin:0;resize:vertical}
-.pcompose button{width:auto;margin:0;padding:9px 18px;color:var(--ink);background:#333}
-.pcompose .note{flex-basis:100%;font-size:12.5px;color:#fca5a5}
-.pcompose .note:empty{display:none}
-.pcompose:has(.note:not(:empty)){flex-wrap:wrap}
+.pcompose{display:flex;align-items:flex-start;gap:12px;margin:0 0 22px;padding:14px 16px 10px;background:#141414;border-radius:16px}
+.pcompose>.face{width:42px;height:42px;font-size:15px;margin-top:2px}
+.pcompose>.face img{width:100%;height:100%;object-fit:cover}
+.pcompose .cmain{flex:1;min-width:0}
+.pcompose textarea,.pcompose textarea:focus{display:block;width:100%;min-height:0;margin:0;padding:9px 0 6px;font-size:17px;line-height:1.45;
+color:var(--ink);background:transparent;box-shadow:none;border:0;border-radius:0;resize:none;overflow:hidden}
+.pcompose textarea::placeholder{color:var(--dim)}
+.cmedia{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 4px}
+.cmedia[hidden]{display:none}
+.cmedia[data-n="1"]{grid-template-columns:1fr}
+.cmedia .cm{position:relative;overflow:hidden;border-radius:14px;background:#1f1f1f;aspect-ratio:16/10}
+.cmedia[data-n="1"] .cm{aspect-ratio:auto;max-height:420px}
+.cmedia img,.cmedia video{display:block;width:100%;height:100%;object-fit:cover}
+.cmedia[data-n="1"] img,.cmedia[data-n="1"] video{max-height:420px;object-fit:contain}
+.cmedia .cx{position:absolute;top:8px;right:8px;width:30px;height:30px;margin:0;padding:0;font-size:18px;line-height:1;color:#fff;
+background:rgba(0,0,0,.65);border-radius:50%}
+.cbar{display:flex;align-items:center;gap:10px;margin:6px 0 0;padding:8px 0 0}
+.cbar .grow{flex:1}
+.cplus{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin:0 0 0 -6px;color:var(--soft);
+border-radius:50%;cursor:pointer;transition:background .15s,color .15s}
+.cplus:hover{color:var(--ink);background:#262626}
+.cplus.off{opacity:.35;pointer-events:none}
+.cplus svg{width:22px;height:22px}
+.cbar .note{margin:0;font-size:12.5px;color:var(--mute)}
+.cbar .count{font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.cbar .count.hot{color:#fca5a5}
+.cbar .cpost{width:auto;margin:0;padding:8px 20px;border-radius:999px;color:var(--ink);background:#333}
+.cbar .cpost:hover{background:#3d3d3d}
+.cbar .cpost:disabled{opacity:.4;cursor:default}
+.ncard .pcompose{margin:14px 0 0;padding:10px 12px 8px}
+.ncard .pcompose>.face{display:none}
+.pmedia{display:grid;grid-template-columns:1fr 1fr;gap:3px;margin:8px 0 6px;overflow:hidden;border-radius:14px}
+.pmedia[data-n="1"]{grid-template-columns:1fr}
+.pmedia[data-n="3"]>:first-child{grid-row:span 2}
+.pmedia a{display:block;min-height:0}
+.pmedia img{display:block;width:100%;height:100%;max-height:520px;object-fit:cover;background:#1f1f1f}
+.pmedia:not([data-n="1"]) img{aspect-ratio:1}
+.pmedia[data-n="3"]>:first-child img{aspect-ratio:auto}
+.pmedia video{display:block;width:100%;max-height:520px;background:#000}
+.pgrid .tile.pic{padding:0}
+.pgrid .tile .tp{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.pgrid .tile.pic p{display:none}
+.pgrid .tile.pic .tm{position:absolute;left:0;right:0;bottom:0;padding:24px 12px 10px;color:#fff;
+background:linear-gradient(transparent,rgba(0,0,0,.6));opacity:0;transition:opacity .15s}
+.pgrid .tile.pic:hover .tm{opacity:1}
+.pgrid .tile .tb{position:absolute;top:10px;right:10px;color:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.pgrid .tile .tb svg{width:20px;height:20px}
 .ptabs{display:flex;justify-content:center;border-top:1px solid #262626;margin:0 0 14px}
 .ptabs span{margin-top:-1px;padding:12px 4px;font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;border-top:1px solid var(--ink)}
 .pgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
@@ -1009,14 +1048,110 @@ const BOARD = `
       value: b.status || "", placeholder: "Set a status: what you're up to"}), h("button", {text: "Set"})]);
     st.addEventListener("submit", function(e){ e.preventDefault();
       send("/home/status", {status: st.elements.status.value}).then(function(){ render(el, b.handle); }); });
-    var said = h("span", {class: "note"});
-    var po = h("form", {class: "compose"}, [h("textarea", {name: "text", maxlength: "500", rows: "3",
-      placeholder: "Post something for your followers"}), h("div", {class: "row2"}, [h("button", {text: "Post"}), said])]);
-    po.addEventListener("submit", function(e){ e.preventDefault();
-      send("/home/post", {text: po.elements.text.value}).then(function(){ render(el, b.handle); },
-        function(err){ said.textContent = err; }); });
-    el.appendChild(st); el.appendChild(po);
+    el.appendChild(st); el.appendChild(composer(b, function(){ render(el, b.handle); }));
   };
+  // -- writing a post: text, and up to 4 photos or 1 video, each uploaded on its own first ----
+  var SVG = function(d, fill){ return '<svg viewBox="0 0 24 24" fill="' + (fill ? "currentColor" : "none") +
+    '" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>'; };
+  var PLUS = SVG('<path d="M12 5v14M5 12h14"/>'), PIC = SVG('<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m20.5 16-5-5-8 8.5"/>'),
+    PLAY = SVG('<path d="M8 5.5v13l10.5-6.5z"/>', true), STACK = SVG('<rect x="7.5" y="7.5" width="13" height="13" rx="2"/><path d="M16.5 3.5h-11a2 2 0 0 0-2 2v11"/>');
+  var MAXLEN = 500;
+  var shrink = function(file){        // a photo: at most 2048 px on a side, as JPEG (a GIF as it is)
+    return new Promise(function(ok, no){
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function(){
+        var w = img.naturalWidth, ht = img.naturalHeight;
+        if (file.type === "image/gif") { ok({blob: file, w: w, h: ht}); return; }
+        var k = Math.min(1, 2048 / Math.max(w, ht)), c = document.createElement("canvas");
+        c.width = Math.round(w * k); c.height = Math.round(ht * k);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(function(bl){ URL.revokeObjectURL(url); bl ? ok({blob: bl, w: c.width, h: c.height}) : no("That photo can't be read here."); }, "image/jpeg", 0.86);
+      };
+      img.onerror = function(){ no("That photo can't be read here: try a JPEG or PNG."); };
+      img.src = url;
+    });
+  };
+  var probe = function(file){         // a video: its size, for the post's layout
+    return new Promise(function(ok){
+      var v = document.createElement("video"); v.preload = "metadata";
+      v.onloadedmetadata = function(){ ok({blob: file, w: v.videoWidth, h: v.videoHeight}); };
+      v.onerror = function(){ ok({blob: file, w: 0, h: 0}); };
+      v.src = URL.createObjectURL(file);
+    });
+  };
+  var upload = function(it){
+    return fetch("/home/media?w=" + it.w + "&h=" + it.h, {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": it.blob.type || it.type}, body: it.blob}).then(back).then(function(j){ return j.id; });
+  };
+  var composer = function(b, done){
+    var items = [], busy = false;
+    var said = h("span", {class: "note"}), count = h("span", {class: "count"});
+    var ta = h("textarea", {name: "text", maxlength: String(MAXLEN), rows: "1", placeholder: "What's happening?"});
+    var pick = h("input", {type: "file", accept: "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime", multiple: "", hidden: ""});
+    var add = h("label", {class: "cplus", title: "Add photos or a video", "aria-label": "Add photos or a video"}, [pick]);
+    add.insertAdjacentHTML("afterbegin", PLUS);
+    var go = h("button", {class: "cpost", text: "Post", disabled: ""});
+    var shelf = h("div", {class: "cmedia", hidden: ""});
+    var sync = function(){
+      var n = ta.value.length;
+      count.textContent = n > MAXLEN - 80 ? String(MAXLEN - n) : "";
+      count.className = "count" + (n > MAXLEN - 20 ? " hot" : "");
+      go.disabled = busy || (!ta.value.trim() && !items.length);
+      add.classList.toggle("off", items.length >= 4 || items.some(function(x){ return x.type === "video"; }));
+      shelf.hidden = !items.length; shelf.dataset.n = items.length;
+      ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px";
+    };
+    var show = function(){
+      shelf.textContent = "";
+      items.forEach(function(it, i){
+        var m = it.type === "video" ? h("video", {src: it.url, muted: "", playsinline: "", preload: "metadata"}) : h("img", {src: it.url, alt: ""});
+        shelf.appendChild(h("div", {class: "cm"}, [m, h("button", {type: "button", class: "cx", "aria-label": "Remove", text: "×",
+          onclick: function(){ URL.revokeObjectURL(it.url); items.splice(i, 1); show(); }})]));
+      });
+      sync();
+    };
+    pick.addEventListener("change", function(){
+      var files = [].slice.call(pick.files); pick.value = ""; said.textContent = "";
+      files.forEach(function(file){
+        var vid = file.type.indexOf("video/") === 0;
+        if (vid && items.length) { said.textContent = "A video goes in a post on its own."; return; }
+        if (!vid && items.some(function(x){ return x.type === "video"; })) { said.textContent = "A video goes in a post on its own."; return; }
+        if (items.length >= 4) { said.textContent = "Up to 4 photos in a post."; return; }
+        if (vid && file.size > 90e6) { said.textContent = "A video is at most 90 MB."; return; }
+        var it = {type: vid ? "video" : "image", url: URL.createObjectURL(file), ready: (vid ? probe : shrink)(file)};
+        items.push(it);
+      });
+      show();
+    });
+    ta.addEventListener("input", sync);
+    var f = h("form", {class: "pcompose"}, [face(b.photo, b.name || b.handle), h("div", {class: "cmain"}, [ta, shelf,
+      h("div", {class: "cbar"}, [add, h("span", {class: "grow"}), said, count, go])])]);
+    f.addEventListener("submit", function(e){
+      e.preventDefault(); if (go.disabled) return;
+      busy = true; sync(); said.textContent = items.length ? "Uploading…" : "";
+      var ids = [], chain = Promise.resolve();
+      items.forEach(function(it, i){
+        chain = chain.then(function(){ return it.ready; }).then(function(r){
+          if (items.length > 1) said.textContent = "Uploading " + (i + 1) + " of " + items.length + "…";
+          r.type = it.type === "video" ? "video/mp4" : "image/jpeg"; return upload(r);
+        }).then(function(id){ ids.push(id); });
+      });
+      chain.then(function(){ return send("/home/post", {text: ta.value, media: ids}); })
+        .then(function(){ items.forEach(function(it){ URL.revokeObjectURL(it.url); }); done(); },
+          function(err){ busy = false; said.textContent = String(err); sync(); });
+    });
+    setTimeout(sync, 0);
+    return f;
+  };
+  // a post's photos (a grid of up to 4) or its video
+  var gallery = function(media){
+    if (!media || !media.length) return null;
+    return h("div", {class: "pmedia", "data-n": String(media.length)}, media.map(function(m){
+      if (m.type === "video") return h("video", {src: m.url, controls: "", playsinline: "", preload: "metadata"});
+      return h("a", {href: m.url, target: "_blank", rel: "noopener"}, [h("img", {src: m.url, alt: "", loading: "lazy"})]);
+    }));
+  };
+
   // a post, with its like and its replies (thread opened in place)
   var postEl = function(el, x, mine, again, author){
     var heart = h("button", {type: "button", class: "lk" + (x.liked ? " on" : ""), "aria-label": x.liked ? "Unlike" : "Like"},
@@ -1029,7 +1164,7 @@ const BOARD = `
     var thread = h("div", {class: "thread", hidden: ""});
     var rb = h("button", {type: "button", class: "rp", text: x.replies ? x.replies + (x.replies === 1 ? " reply" : " replies") : "Reply"});
     rb.addEventListener("click", function(){ thread.hidden = !thread.hidden; if (!thread.hidden) loadThread(thread, x, rb); });
-    return h("div", {class: "post"}, [author || null, h("p", {text: x.text}), h("div", {class: "pm"}, [
+    return h("div", {class: "post"}, [author || null, x.text ? h("p", {text: x.text}) : null, gallery(x.media), h("div", {class: "pm"}, [
       h("small", {text: ago(x.at)}), heart, rb,
       mine ? h("button", {type: "button", class: "del", text: "Delete", onclick: function(){
         send("/home/post-delete", {id: x.id}).then(again); }}) : null]), thread]);
@@ -1191,15 +1326,7 @@ const BOARD = `
       h("div", {class: "pacts"}, [edit, b.self ? gear : null]), stats, about]));
     if (b.self && b.requests) el.appendChild(h("button", {type: "button", class: "reqs",
       text: b.requests + (b.requests === 1 ? " follow request" : " follow requests"), onclick: function(){ list(el, b, "requests"); }}));
-    if (b.self) {
-      var said = h("span", {class: "note"});
-      var po = h("form", {class: "pcompose"}, [face(b.photo, b.name || b.handle), h("textarea", {name: "text",
-        maxlength: "500", rows: "2", placeholder: "Share something with your followers"}), h("button", {text: "Post"}), said]);
-      po.addEventListener("submit", function(e){ e.preventDefault();
-        send("/home/post", {text: po.elements.text.value}).then(function(){ render(el, b.handle); },
-          function(err){ said.textContent = err; }); });
-      el.appendChild(po);
-    }
+    if (b.self) el.appendChild(composer(b, function(){ render(el, b.handle); }));
     el.appendChild(h("div", {class: "ptabs"}, [h("span", {text: "Posts"})]));
     if (!b.posts.length) {
       el.appendChild(h("div", {class: "pempty"}, [h("b", {text: b.self ? "Share your first post" : "No posts yet"}),
@@ -1208,8 +1335,14 @@ const BOARD = `
     }
     el.appendChild(h("div", {class: "pgrid"}, b.posts.map(function(x){
       var bub = h("span", {class: "bub"}); bub.innerHTML = BUBBLE;
-      return h("button", {type: "button", class: "tile", onclick: function(){ opened(el, x, b); }}, [
-        h("p", {text: x.text}), h("span", {class: "tm"}, [h("span", {class: x.liked ? "on" : "", text: "♥ " + x.likes}),
+      var m0 = (x.media || [])[0], pic = null;
+      if (m0) {
+        pic = m0.type === "video" ? h("video", {class: "tp", src: m0.url + "#t=0.1", muted: "", playsinline: "", preload: "metadata"}) :
+          h("img", {class: "tp", src: m0.url, alt: "", loading: "lazy"});
+        var badge = h("span", {class: "tb"}); badge.innerHTML = m0.type === "video" ? PLAY : x.media.length > 1 ? STACK : "";
+      }
+      return h("button", {type: "button", class: "tile" + (m0 ? " pic" : ""), onclick: function(){ opened(el, x, b); }}, [
+        pic, m0 && badge.innerHTML ? badge : null, x.text ? h("p", {text: x.text}) : h("p"), h("span", {class: "tm"}, [h("span", {class: x.liked ? "on" : "", text: "♥ " + x.likes}),
           h("span", {}, [bub, String(x.replies)]), h("small", {text: ago(x.at)})])]);
     })));
   };

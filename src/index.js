@@ -25,6 +25,10 @@ const INVITE_LIFE = 30 * 86400e3, MAX_INVITEE = 60;
 const PAIR_WINDOW = 30 * 86400e3, QUIET_AFTER_DECLINE = 30 * 86400e3, WAIT_MAX = 25;
 const FINDS_PER_HOUR = 30, PHOTO_MAX = 150e3, SUGGESTS_PER_HOUR = 600, POSTS_PER_DAY = 30,
   MAX_POST = 500, MAX_STATUS = 100, MAX_REPLY = 280, REPLIES_PER_DAY = 100, MAX_LINKS = 5;
+// a post's photos and videos, in R2 (MEDIA) under m/<handle>/<id>: at most 4 photos or 1 video
+const MEDIA_TYPES = {"image/jpeg": "i", "image/png": "i", "image/webp": "i", "image/gif": "i",
+  "video/mp4": "v", "video/webm": "v", "video/quicktime": "v"};
+const IMAGE_MAX = 8e6, VIDEO_MAX = 90e6, UPLOADS_PER_HOUR = 60, MEDIA_ID = /^[A-Za-z0-9_-]{16}$/;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
@@ -159,6 +163,7 @@ export class Directory {
     try { this.sql.exec("ALTER TABLE person ADD COLUMN private INTEGER DEFAULT 0"); } catch {}
     try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN links TEXT DEFAULT '[]'"); } catch {}
+    try { this.sql.exec("ALTER TABLE post ADD COLUMN media TEXT DEFAULT '[]'"); } catch {}
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
@@ -202,7 +207,7 @@ export class Directory {
       "handle = ? ORDER BY at DESC LIMIT 200)", handle, handle);
   }
   postsFor(viewer, where, ...args) {  // posts with their like and reply counts, as viewer sees them
-    return this.all("SELECT t.id, t.text, t.at, t.handle, p.name, f.at photo, " +
+    return this.all("SELECT t.id, t.text, t.at, t.handle, t.media, p.name, f.at photo, " +
       "(SELECT count(*) FROM likes l WHERE l.post = t.id) likes, " +
       "EXISTS (SELECT 1 FROM likes l WHERE l.post = t.id AND l.handle = ?) liked, " +
       "(SELECT count(*) FROM reply r WHERE r.post = t.id) replies " +
@@ -526,13 +531,18 @@ export class Directory {
     if (p === "/post-add") {
       if (this.one("SELECT count(*) n FROM post WHERE handle = ? AND at > ?", b.handle, now - 86400e3).n >= POSTS_PER_DAY)
         return json({error: `At most ${POSTS_PER_DAY} posts a day.`});
-      this.sql.exec("INSERT INTO post VALUES (?, ?, ?, ?)", b.id, b.handle, b.text, now);
+      this.sql.exec("INSERT INTO post (id, handle, text, at, media) VALUES (?, ?, ?, ?, ?)", b.id, b.handle,
+        b.text, now, JSON.stringify(b.media || []));
       return json({ok: true});
     }
-    if (p === "/post-del") {
-      if (this.one("SELECT 1 FROM post WHERE id = ? AND handle = ?", b.id, b.handle)) this.dropPost(b.id);
-      return json({ok: true});
+    if (p === "/post-del") {          // answers with the post's media, for the worker to erase
+      const x = this.one("SELECT media FROM post WHERE id = ? AND handle = ?", b.id, b.handle);
+      if (x) this.dropPost(b.id);
+      let media = [];
+      try { media = JSON.parse(x && x.media || "[]"); } catch {}
+      return json({ok: true, media});
     }
+    if (p === "/can-see") return json({ok: this.canSee(b.viewer, b.handle)});
     if (p === "/status-set") {
       this.sql.exec("UPDATE person SET status = ? WHERE handle = ?", b.status, b.handle);
       return json({ok: true});
@@ -1164,6 +1174,15 @@ async function getHome(req, env) {
   return home(env, person, ses);
 }
 
+async function eraseMedia(env, handle) {  // every photo and video a person posted
+  let cursor;
+  do {
+    const got = await env.MEDIA.list({prefix: `m/${handle}/`, cursor});
+    if (got.objects.length) await env.MEDIA.delete(got.objects.map(o => o.key));
+    cursor = got.truncated ? got.cursor : undefined;
+  } while (cursor);
+}
+
 async function wipeAgent(env, id) { await call(agentObj(env, id), "/wipe"); }
 
 async function postHome(req, env, url) {
@@ -1246,6 +1265,7 @@ async function postHome(req, env, url) {
       return home(env, person, ses, `<p>Type @${person.handle} to delete the account.</p>`, "settings");
     for (const a of person.agents) await wipeAgent(env, a.id);
     await call(dir(env), "/delete-me", {clerk: ses.clerk});
+    await eraseMedia(env, person.handle);
     await revokeClerkSessions(env, ses.clerk);
     const r = signedOutPage();
     r.headers.append("set-cookie", clearCookie);
@@ -1320,8 +1340,13 @@ async function canvasRoute(req, env, url) {
   const photoUrl = x => x.photo ? `/home/photo/${x.handle}?v=${x.photo}` : null;
   const card = x => ({handle: x.handle, name: x.name || "", status: x.status || "", photo: photoUrl(x),
     private: !!x.private});
+  const mediaOut = x => {
+    let m = [];
+    try { m = JSON.parse(x.media || "[]"); } catch {}
+    return m.map(y => ({type: y.k === "v" ? "video" : "image", url: `/home/media/${x.handle}/${y.id}`, w: y.w, h: y.h}));
+  };
   const postOut = x => ({id: x.id, text: x.text, at: x.at, likes: x.likes, liked: x.liked,
-    replies: x.replies, ...card(x)});
+    replies: x.replies, media: mediaOut(x), ...card(x)});
   if (p === "/home/suggest" && req.method === "GET") {
     if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "suggest", most: SUGGESTS_PER_HOUR})).ok)
       return json({error: "Too many searches: try again in an hour."}, 429);
@@ -1370,8 +1395,43 @@ async function canvasRoute(req, env, url) {
       ref: x.ref, text: x.text || "", at: x.at, read: !!x.read, ...card({...x, handle: x.actor})})));
   if (p === "/home/notif-count" && req.method === "GET")
     return json(await call(dir(env), "/notif-count", {handle: person.handle}));
+  if (p.startsWith("/home/media/") && req.method === "GET") {   // only to whoever may see the post
+    const [h, id] = p.slice(12).split("/");
+    if (!/^[a-z0-9-]{1,30}$/.test(h || "") || !MEDIA_ID.test(id || "")) return text("No such file.", 404);
+    if (!(await call(dir(env), "/can-see", {viewer: person.handle, handle: h})).ok) return text("Private.", 403);
+    const o = await env.MEDIA.get(`m/${h}/${id}`, {range: req.headers, onlyIf: req.headers});
+    if (!o) return text("No such file.", 404);
+    const hd = new Headers({...H, "cache-control": "private, max-age=86400", "accept-ranges": "bytes",
+      "content-security-policy": "default-src 'none'", "content-disposition": "inline"});
+    o.writeHttpMetadata(hd);
+    hd.set("etag", o.httpEtag);
+    if (!("body" in o)) return new Response(null, {status: 304, headers: hd});
+    if (o.range && req.headers.get("range")) {
+      const off = o.range.offset ?? (o.size - o.range.suffix), len = o.range.length ?? (o.size - off);
+      hd.set("content-range", `bytes ${off}-${off + len - 1}/${o.size}`);
+      return new Response(o.body, {status: 206, headers: hd});
+    }
+    return new Response(o.body, {headers: hd});
+  }
   if (req.method !== "POST") return text("Unknown address.", 404);
   if (!sameOrigin(req, url)) return json({error: "That didn't come from this site."}, 403);
+  if (p === "/home/media") {          // one photo or video, its raw bytes, streamed into R2
+    const type = (req.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const k = MEDIA_TYPES[type], size = +req.headers.get("content-length") || 0;
+    if (!k) return json({error: "Photos (JPEG, PNG, WebP, GIF) and videos (MP4, WebM, MOV) only."}, 415);
+    if (!size || size > (k === "v" ? VIDEO_MAX : IMAGE_MAX))
+      return json({error: k === "v" ? "A video is at most 90 MB." : "A photo is at most 8 MB."}, 413);
+    if (!(await call(dir(env), "/quota", {clerk: ses.clerk, kind: "media", most: UPLOADS_PER_HOUR})).ok)
+      return json({error: "Too many uploads: try again in an hour."}, 429);
+    const id = secret(16);
+    const num = v => String(Math.max(0, Math.min(20000, Math.round(+v || 0))));
+    try {
+      await env.MEDIA.put(`m/${person.handle}/${id}`, req.body.pipeThrough(new FixedLengthStream(size)), {
+        httpMetadata: {contentType: type},
+        customMetadata: {k, w: num(url.searchParams.get("w")), h: num(url.searchParams.get("h"))}});
+    } catch { return json({error: "That upload didn't arrive whole: try again."}, 400); }
+    return json({id, type: k === "v" ? "video" : "image"});
+  }
   const raw = await req.text();
   if (raw.length > PHOTO_MAX * 1.5) return json({error: "That's too big."}, 413);
   let f;
@@ -1398,13 +1458,25 @@ async function canvasRoute(req, env, url) {
   }
   if (p === "/home/post") {
     const t = clean(String(f.text || "").replace(/\r/g, ""), MAX_POST + 1);
-    if (!t) return json({error: "Write something first."}, 400);
     if (t.length > MAX_POST) return json({error: `At most ${MAX_POST} characters.`}, 400);
-    const got = await call(dir(env), "/post-add", {id: secret(12), handle: person.handle, text: t});
+    const ids = Array.isArray(f.media) ? [...new Set(f.media.map(String))] : [];
+    const media = [];
+    for (const id of ids.slice(0, 5)) {     // only this person's own uploads, each one still there
+      const o = MEDIA_ID.test(id) && await env.MEDIA.head(`m/${person.handle}/${id}`);
+      if (!o) return json({error: "A photo or video didn't finish uploading: add it again."}, 400);
+      const m = o.customMetadata || {};
+      media.push({k: m.k, id, w: +m.w || 0, h: +m.h || 0});
+    }
+    const vids = media.filter(x => x.k === "v").length;
+    if (media.length > 4 || (vids && media.length > 1))
+      return json({error: "A post carries up to 4 photos, or 1 video."}, 400);
+    if (!t && !media.length) return json({error: "Write something first."}, 400);
+    const got = await call(dir(env), "/post-add", {id: secret(12), handle: person.handle, text: t, media});
     return got.error ? json(got, 429) : json({ok: true});
   }
   if (p === "/home/post-delete") {
-    await call(dir(env), "/post-del", {id: String(f.id || ""), handle: person.handle});
+    const got = await call(dir(env), "/post-del", {id: String(f.id || ""), handle: person.handle});
+    for (const m of got.media || []) await env.MEDIA.delete(`m/${person.handle}/${m.id}`);
     return json({ok: true});
   }
   if (p === "/home/status") {
