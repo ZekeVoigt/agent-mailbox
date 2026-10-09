@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 unset CLOUDFLARE_API_TOKEN
 export DEPLOY_LOCK="${TMPDIR:-/tmp}/constellation-deploy-test.lock" DEPLOY_SETTLE_S=10
 fails=0
+log="${TMPDIR:-/tmp}/constellation-deploy-test.log"
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
 # expect <what> <words the refusal must contain> <command...>: refused, saying so
@@ -46,11 +47,11 @@ expect_refused "a second deploy while one runs is refused" "another deploy is ru
 kill $holder 2>/dev/null; wait $holder 2>/dev/null
 pass "(the first deploy's process ends, leaving its lock behind)"
 
-if scripts/deploy staging > deploy-test.log 2>&1 && grep -q "staging passed" deploy-test.log; then
+if scripts/deploy staging > "$log" 2>&1 && grep -q "staging passed" "$log"; then
   pass "a dead deploy's lock is taken over; staging deployed, read back, its e2e passed and recorded"
-else fail "staging"; tail -5 deploy-test.log; fi
-grep -q "ALL PASS" deploy-test.log && pass "(the whole e2e ran: $(grep -c '^PASS' deploy-test.log) checks)" || fail "the e2e did not run whole"
-rm -f deploy-test.log
+else fail "staging"; tail -5 "$log"; fi
+grep -q "ALL PASS" "$log" && pass "(the whole e2e ran: $(grep -c '^PASS' "$log") checks)" || fail "the e2e did not run whole"
+rm -f "$log"
 [ -f "$passed/$sha" ] && pass "the pass is recorded for this exact commit" || fail "no pass recorded"
 
 out=$(scripts/deploy production 2>&1) && echo "$out" | grep -q "runs .* (git:" &&
