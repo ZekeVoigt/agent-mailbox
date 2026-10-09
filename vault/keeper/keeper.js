@@ -10,7 +10,7 @@
 import http from "node:http";
 import {spawn} from "node:child_process";
 import {readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, statSync} from "node:fs";
-import {randomBytes, createHash} from "node:crypto";
+import {randomBytes, createHash, X509Certificate} from "node:crypto";
 import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {Gcs, Local, Conflict} from "./store.js";
@@ -94,7 +94,25 @@ function certHash() {
   }
   if (!best) return null;
   const pem = readFileSync(best, "utf8").match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/);
-  return pem && createHash("sha256").update(Buffer.from(pem[1].replace(/\s+/g, ""), "base64")).digest("hex");
+  if (!pem) return null;
+  const der = Buffer.from(pem[1].replace(/\s+/g, ""), "base64");
+  const hash = createHash("sha256").update(der).digest("hex");
+  remember(hash, der);
+  return hash;
+}
+
+// every certificate this Vault has made for its host, kept with its state (so it survives
+// restarts): GET /attestation/certs lists them, and vault/ct-watch.py compares that list with the
+// public Certificate Transparency logs -- a certificate for the host that the Vault did not make
+// is someone else's (DNS is the operator's, so this is how a swapped certificate would show)
+const CERTS = () => join(ROOTS.caddy, "vault-certs.json");
+function made() { try { return JSON.parse(readFileSync(CERTS(), "utf8")); } catch { return []; } }
+function remember(hash, der) {
+  const list = made();
+  if (list.some(c => c.sha256 === hash)) return;
+  const x = new X509Certificate(der);
+  list.push({sha256: hash, serial: x.serialNumber.toLowerCase(), notBefore: x.validFrom, notAfter: x.validTo, issuer: x.issuer.split("\n").find(l => l.startsWith("O=")) || ""});
+  writeFileSync(CERTS(), JSON.stringify(list, null, 1));
 }
 async function attestation(url, res) {
   if (!existsSync(gcp.TEE_SOCK)) return send(res, 503, "No attestation here: this is not a Confidential Space VM.\n", {"content-type": "text/plain"});
@@ -166,6 +184,8 @@ async function main() {
     const url = new URL(req.url, "http://keeper");
     try {
       if (url.pathname === "/attestation" && req.method === "GET") return await attestation(url, res);
+      if (url.pathname === "/attestation/certs" && req.method === "GET") { certHash();
+        return send(res, 200, JSON.stringify({host: conf.host, certificates: made()}, null, 1) + "\n", {"content-type": "application/json"}); }
       if (url.pathname === "/admin/restore") return restore ? await restore(req, res) : send(res, 503, "");
       if (url.pathname === "/asn") return send(res, 200, JSON.stringify(asn.lookup(url.searchParams.get("ip"))), {"content-type": "application/json"});
       if (url.pathname.startsWith("/blob")) return await media(req, res, url);

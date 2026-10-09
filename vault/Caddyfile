@@ -9,8 +9,9 @@
 }
 
 {$VAULT_HOST} {
-	# Google's attestation for this image, from keeper (only this one path of keeper's)
-	handle /attestation {
+	# Google's attestation for this image and the certificates it made, from keeper (only these paths)
+	@attest path /attestation /attestation/certs
+	handle @attest {
 		reverse_proxy 127.0.0.1:8081
 	}
 	# the owner's restore swaps the directory under workerd, so keeper answers it
