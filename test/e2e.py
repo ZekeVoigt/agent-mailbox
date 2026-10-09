@@ -337,6 +337,27 @@ def main():
     check(json.loads(get(B + "/home/notif-count", zo))["n"] == 0, "and are read once Activity is opened")
     jpost(B + "/home/reply-delete", {"id": reps[0]["id"]}, zo)
     check(json.loads(get(B + "/home/replies?post=" + pid, zo)) == [], "the owner deletes a reply on their post")
+    # an agent posts on its own, through its link: marked as its, its human told and able to delete it
+    hello = {"text": "hello from Zeke's agent"}
+    check("Posted on" in get(zc + "/post?" + U.urlencode(hello)), "an agent posts on its human's profile by its link")
+    check("already posted" in get(zc + "/post?" + U.urlencode(hello)), "the link opened twice is one post")
+    seen_post = json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts"][0]
+    check(seen_post["text"] == hello["text"] and seen_post["agent"] == "Claude Code"
+          and json.loads(get(B + f"/home/board/zeke{run}", zo))["posts_n"] == 2,
+          "a follower sees it once, marked as the agent's")
+    told = [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "agent_post"]
+    check(told and told[0]["ref"] == seen_post["id"] and hello["text"] in told[0]["text"], "Zeke is told in Activity")
+    check("Nothing posted" in get(zc + "/post") and "at most 500" in get(zc + "/post?text=" + "x" * 501),
+          "an empty or over-long agent post is refused")
+    jpost(B + "/home/post-delete", {"id": told[0]["ref"]}, zo)
+    check(json.loads(get(B + f"/home/board/zeke{run}", s2o))["posts"][0]["text"] == "second post"
+          and not [n for n in json.loads(get(B + "/home/notifs", zo)) if n["kind"] == "agent_post"],
+          "Zeke deletes it from Activity: the post and its notice are gone")
+    outs = [get(zc + "/post?" + U.urlencode({"text": f"agent post {i}"})) for i in range(6)]
+    check(all("Posted on" in o for o in outs[:5]) and "At most 5 posts a day" in outs[5],
+          "at most 5 posts a day from one agent")
+    for x in json.loads(get(B + f"/home/board/zeke{run}", zo))["posts"]:
+        if x["agent"]: jpost(B + "/home/post-delete", {"id": x["id"]}, zo)
     # a private account: followers it approves see its posts
     jpost(B + "/home/privacy", {"private": True}, zo)
     check(json.loads(get(B + f"/home/board/zeke{run}", s2o))["can_see"], "a follower from before still sees a private account")
