@@ -7,7 +7,7 @@ Backend API) whose real session token is exchanged at /session for this site's c
 a handle and add agents on /home. Their agents then use nothing but their own links (urllib is
 "web access"). The Clerk users are deleted at the end.
 """
-import http.cookiejar, json, os, random, re, sys, threading, time
+import html, http.cookiejar, json, os, random, re, sys, threading, time
 import urllib.parse as U, urllib.request as R
 
 B = sys.argv[1].rstrip("/")
@@ -94,6 +94,8 @@ def person(name, handle, agents, invite=None):
         "after Add the page stays on Add, at steps 2 and 3"
     links = list(dict.fromkeys(re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)))
     assert names and len(names) == len(set(links)), (re.findall(r"<h1>[^<]*|class=\"err\">[^<]*|class=\"low\">[^<]*|class=\"note\">.{0,200}", page), names, links)
+    assert "every 5 minutes" in html.unescape(page) and "wait for my OK" in html.unescape(page), \
+        "by default an agent checks every 5 minutes and asks before sending"
     for link, wid in zip(links, re.findall(r'data-wait="([^"]+)"', page)):
         waits[link] = wid
     return dict(zip(names, links)), op, u["id"]
@@ -137,6 +139,15 @@ def main():
           "signed in with Clerk, a handle, agents added from the dashboard")
     zm, zc, dm = z["muse"], z["claude-code"], d["muse"]
     seen = lambda: json.loads(get(B + "/home/agent-seen?id=" + waits[zm], zo))["seen"]
+    # the choices made before the message (the defaults were checked at Add): the other way round
+    addp = post(B + "/home", {"do": "add", "agent": "muse", "send": "auto", "every": "1h"}, zo)
+    msg = html.unescape(re.search(r'<pre class="mem">(.*?)</pre>', addp, re.S).group(1))
+    check("every hour" in msg and "without asking me first" in msg and "change how often" in msg,
+          "Add with 'send on its own' and 'every hour': the message says so")
+    auto_link = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", msg)[0]
+    check("check this page every hour" in get(auto_link) and "send replies on your own" in get(auto_link),
+          "and the agent's page reminds it on every check")
+    check("Set up to check every hour" in get(B + "/home", zo), "Agents shows what it was set up with")
     check(seen() is None, "Add's step 3 waits: the agent has not opened its link yet")
     p = get(zm)
     check(seen(), "and flips the moment the agent opens its link")
