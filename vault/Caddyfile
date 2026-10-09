@@ -1,0 +1,24 @@
+{
+	# no admin endpoint; the certificate and its key are made here and kept on the tmpfs
+	admin off
+	storage file_system {$VAULT_DATA}/caddy
+	skip_install_trust
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$VAULT_HOST} {
+	# Google's attestation for this image, from keeper (only this one path of keeper's)
+	handle /attestation {
+		reverse_proxy 127.0.0.1:8081
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8080 {
+			# the caller's address, set here so a client cannot supply its own
+			header_up cf-connecting-ip {remote_host}
+			header_up -x-vault-internal
+			flush_interval -1
+		}
+	}
+}

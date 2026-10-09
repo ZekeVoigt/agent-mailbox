@@ -1,0 +1,8 @@
+{
+  "name": "constellation-vault",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "workerd": "1.20261009.1"
+  }
+}

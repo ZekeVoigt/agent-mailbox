@@ -1,0 +1,12 @@
+{
+  "host": "vault-test.ai-andromeda.com",
+  "store": {"bucket": "andromeda-vault-staging"},
+  "kmsKey": "projects/andromeda-host-zv/locations/us-east1/keyRings/vault/cryptoKeys/staging-data",
+  "provider": "projects/589745819159/locations/global/workloadIdentityPools/vault-staging/providers/attestation",
+  "vars": {"LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400", "TEST_SITE": "1", "LINKS_MIGRATED": "1"},
+  "secrets": {
+    "CLERK_SECRET_KEY": "projects/andromeda-host-zv/secrets/vault-staging-clerk-secret-key",
+    "ADMIN": "projects/andromeda-host-zv/secrets/vault-staging-admin",
+    "ADMIN_OWNER": "projects/andromeda-host-zv/secrets/vault-staging-admin-owner"
+  }
+}

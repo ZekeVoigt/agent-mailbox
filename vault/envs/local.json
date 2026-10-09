@@ -1,0 +1,7 @@
+{
+  "host": "localhost",
+  "store": {"local": "/store"},
+  "keyFile": "/store/data.key",
+  "vars": {"LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400", "TEST_SITE": "1", "LINKS_MIGRATED": "1"},
+  "secretsFromEnv": ["CLERK_SECRET_KEY", "ADMIN", "ADMIN_OWNER", "GIPHY_KEY"]
+}
