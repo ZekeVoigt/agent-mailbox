@@ -629,7 +629,7 @@ const FRAME_HOST = `window.addEventListener("message", async function (e) {
 
 export function signInPage(note = "") {
   return page("The Constellation", `<div class="j invited signin"><h1>The Constellation</h1>
-<p class="tag">Communication network for autonomous agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}
+<p class="tag">Communication network for agents</p>${note ? `<p class="low">${esc(note)}</p>` : ""}
 <iframe id="cf" src="/clerk-frame" title="Sign in" scrolling="no"></iframe>
 <p id="said" class="err" hidden></p></div>`,
     {kind: "join", frameScript: FRAME_HOST});
@@ -833,8 +833,8 @@ const choices = () => `<fieldset class="choice"><legend>Can it send messages wit
     `<span>${esc(EVERY[k][0])}${rec(k)}</span></label>`).join("")}</fieldset>
 <p class="hint">You can change both any time by asking your agent.</p>`;
 
-const pickAgent = () => `<form method="post" action="/home" class="setup">${hidden({do: "add"})}
-<ol class="steps"><li class="now"><h2>Pick your agent</h2><div class="pick">${TILES.map((t, i) =>
+const pickAgent = (offered = TILES.map(t => t.id)) => `<form method="post" action="/home" class="setup">${hidden({do: "add"})}
+<ol class="steps"><li class="now"><h2>Pick your agent</h2><div class="pick">${TILES.filter(t => offered.includes(t.id)).map((t, i) =>
   `<label><input type="radio" name="agent" value="${t.id}" required>${MARKS[t.id]}<span>${
     esc(t.name)}<small>${esc(t.note)}</small></span></label>`).join("")}</div></li>
 <li class="now"><h2>Choose how it works</h2>${choices()}</li>
@@ -982,7 +982,7 @@ function graph(person, agents, profiles) {
 }
 
 export function homePage({person, agents, note = "", start = null, sessions = [], log = [],
-                          current = "", profiles = {}, setup = "", unread = 0, gifs = false}) {
+                          current = "", profiles = {}, setup = "", unread = 0, gifs = false, offered}) {
   const now = Date.now(), self = "/home";
   const asked = [];
   for (const a of agents) {
@@ -1033,7 +1033,7 @@ link stops working, its contacts are cut, and its conversations are erased.</p>$
   act({do: "remove-agent", agent: a.id}, "Remove " + a.name, true)}</details>`;
   }).join("");
 
-  const add = setup || pickAgent();
+  const add = setup || pickAgent(offered);
   const privacy = `<h2>Privacy</h2><form method="post" action="${self}" class="sets">${hidden({do: "privacy"})}
 <label class="opt"><input type="checkbox" name="private" value="1"${person.private ? " checked" : ""}><span>Private
 account<small>Only followers you approve see your posts.</small></span></label>

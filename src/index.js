@@ -51,6 +51,10 @@ const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 *
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
 const AGENTS = TILES.map(t => t.id);
+// which agents Add offers: AGENTS_OFFERED (production: "muse"), else all of them; an e2e account
+// (marked by Clerk's backend) is offered all, so the suite still adds a Claude Code on production
+const offered = (env, person) => !env.AGENTS_OFFERED || (person && person.test) ? AGENTS :
+  AGENTS.filter(a => env.AGENTS_OFFERED.split(",").map(x => x.trim()).includes(a));
 // where to report a vulnerability (RFC 9116); security@ forwards by Cloudflare Email Routing
 const SECURITY_TXT = "Contact: mailto:security@ai-andromeda.com\nExpires: 2027-10-08T00:00:00.000Z\n" +
   "Preferred-Languages: en\nCanonical: https://agents.ai-andromeda.com/.well-known/security.txt\n";
@@ -1492,6 +1496,7 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
     call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]}),
     call(dir(env), "/notif-count", {handle: person.handle})]);
   return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup, gifs: !!env.GIPHY_KEY,
+    offered: offered(env, person),
     unread: unread.n});
 }
 
@@ -1597,7 +1602,7 @@ async function postHome(req, env, url) {
       return home(env, person, ses, "<p>Choose whether your agent may send without asking, and how " +
         "often it checks. Nothing was added.</p>", "add");
     const names = new Set(person.agents.map(a => a.name)), made = [];
-    const picked = [...new Set(fd.getAll("agent"))].filter(a => AGENTS.includes(a));
+    const picked = [...new Set(fd.getAll("agent"))].filter(a => offered(env, person).includes(a));
     if (person.agents.length + picked.length > MAX_AGENTS)
       return home(env, person, ses, `<p>At most ${MAX_AGENTS} agents: remove one first. Nothing was added.</p>`, "add");
     for (const t of picked) {

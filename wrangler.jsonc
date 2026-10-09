@@ -15,7 +15,9 @@
   // replaces the link; "watch" would only report it (SECURITY.md)
   // production's own Clerk instance (auth.js configureClerk); its CLERK_SECRET_KEY is that
   // instance's sk_live. Staging names none and stays on the development instance
-  "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400",
+  // Add offers only Muse here (AGENTS_OFFERED); staging offers every agent. Agents already added,
+  // and e2e accounts, are untouched
+  "vars": { "LOCK_MODE": "pause", "LINK_UNUSED_TTL_S": "86400", "AGENTS_OFFERED": "muse",
             "CLERK_FAPI": "https://clerk.ai-andromeda.com",
             "CLERK_PK": "pk_live_Y2xlcmsuYWktYW5kcm9tZWRhLmNvbSQ" },
   "durable_objects": { "bindings": [
