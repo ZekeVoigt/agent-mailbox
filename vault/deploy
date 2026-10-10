@@ -46,10 +46,13 @@ gcloud kms keys add-iam-policy-binding "$key" --member="$member" --role=roles/cl
 grep -q " $env git:$sha $digest\$" vault/DIGESTS 2>/dev/null || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $env git:$sha $digest" >> vault/DIGESTS
 
 family=confidential-space; [ "${DEBUG:-}" = 1 ] && family=confidential-space-debug
-meta="^~^tee-image-reference=$IMG@$digest~tee-env-VAULT_ENV=$env~tee-restart-policy=Always~tee-container-log-redirect=true~tee-mount=type=tmpfs,source=tmpfs,destination=/data,size=4294967296"
+# logs leave the VM only on the debug image (the production image refuses to launch with this set)
+meta="^~^tee-image-reference=$IMG@$digest~tee-env-VAULT_ENV=$env~tee-restart-policy=Always~tee-mount=type=tmpfs,source=tmpfs,destination=/data,size=4294967296"
+[ "${DEBUG:-}" = 1 ] && meta="$meta~tee-container-log-redirect=true"
 if gcloud compute instances describe "$vm" --zone=$Z >/dev/null 2>&1; then
   echo "== restart $vm on the new image"
   gcloud compute instances add-metadata "$vm" --zone=$Z --metadata="$meta" >/dev/null
+  [ "${DEBUG:-}" = 1 ] || gcloud compute instances remove-metadata "$vm" --zone=$Z --keys=tee-container-log-redirect >/dev/null
   gcloud compute instances stop "$vm" --zone=$Z >/dev/null
   gcloud compute instances start "$vm" --zone=$Z >/dev/null
 else
