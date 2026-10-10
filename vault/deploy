@@ -68,7 +68,7 @@ create() {    # vm zone [--address=IP]
     --image-project=confidential-space-images --image-family=$family \
     --service-account="$sa" --scopes=cloud-platform --tags=vault --metadata="$meta" ${3:---no-address} >/dev/null
 }
-holder_zone=""
+holder_zone="" rolled=$(date +%s)
 for vz in $vms; do
   v=${vz%%:*} z=${vz#*:}
   if [ "$v" = "$holder" ]; then holder_zone=$z; continue; fi
@@ -82,7 +82,16 @@ for vz in $vms; do
     else create "$v" "$z"; fi
   fi
 done
+bucket=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["store"]["bucket"])' "$conf")
+ready() {     # vm since(epoch s): the standby says it is waiting for the lease, after since
+  gcloud storage cat "gs://$bucket/standby/$1" 2>/dev/null | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["at"]/1000 > float(sys.argv[1]) else 1)' "$2" 2>/dev/null
+}
 if [ -n "$holder" ]; then
+  for vz in $vms; do
+    v=${vz%%:*}; [ "$v" = "$holder" ] && continue
+    echo "== wait for $v to be a ready standby"
+    i=0; until ready "$v" "$rolled"; do i=$((i + 1)); [ $i -gt 90 ] && refuse "$v did not come up as a standby within 15 minutes; $holder still serves"; sleep 10; done
+  done
   echo "== $holder ($holder_zone) hands over: stopped, then started on the new image"
   setmeta "$holder" "$holder_zone"
   gcloud compute instances stop "$holder" --zone="$holder_zone" >/dev/null

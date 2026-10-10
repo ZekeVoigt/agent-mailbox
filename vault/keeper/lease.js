@@ -2,6 +2,7 @@
 // with a generation-matched write. Two Vaults on one bucket (a deploy's old and new VM) never both
 // write: the new one waits until the old one releases the lease or lets it lapse.
 import {randomUUID} from "node:crypto";
+import {hostname} from "node:os";
 import {Conflict} from "./store.js";
 
 const NAME = "lease", TTL = 45e3, EVERY = 10e3;
@@ -25,6 +26,8 @@ export class Lease {
           break;
         }
         if (!said) { this.log(`lease: held by another Vault until ${new Date(cur.until).toISOString()}; waiting`); said = true; }
+        // say so: vault/deploy hands over only once the standby it restarted is ready (standby/<host>)
+        await this.store.put(`standby/${hostname()}`, Buffer.from(JSON.stringify({at: Date.now()}))).catch(() => {});
         // look again every 5 s: a holder that stops cleanly releases the lease at once
         await new Promise(f => setTimeout(f, Math.min(Math.max(cur.until - Date.now(), 0) + 1000, 5e3)));
       } catch (e) {
