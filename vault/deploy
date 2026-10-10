@@ -23,7 +23,7 @@ IMG=$R-docker.pkg.dev/$P/vault/vault
 conf=vault/envs/$env.json
 host=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["host"])' "$conf")
 key=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["kmsKey"])' "$conf")
-vm=vault-$env sa=vault-$env@$P.iam.gserviceaccount.com pool=vault-$env
+sa=vault-$env@$P.iam.gserviceaccount.com pool=vault-$env holder_done=""
 refuse() { echo "deploy refused: $*" >&2; exit 1; }
 [ "$env" = production ] && [ "${DEBUG:-}" = 1 ] && refuse "production never runs the debug image"
 [ -z "$(git status --porcelain -- . ':!vault/DIGESTS')" ] || refuse "the working tree has changes; commit them first"
@@ -49,21 +49,44 @@ family=confidential-space; [ "${DEBUG:-}" = 1 ] && family=confidential-space-deb
 # logs leave the VM only on the debug image (the production image refuses to launch with this set)
 meta="^~^tee-image-reference=$IMG@$digest~tee-env-VAULT_ENV=$env~tee-restart-policy=Always~tee-mount=type=tmpfs,source=tmpfs,destination=/data,size=4294967296"
 [ "${DEBUG:-}" = 1 ] && meta="$meta~tee-container-log-redirect=true"
-if gcloud compute instances describe "$vm" --zone=$Z >/dev/null 2>&1; then
-  echo "== restart $vm on the new image"
-  gcloud compute instances add-metadata "$vm" --zone=$Z --metadata="$meta" >/dev/null
-  [ "${DEBUG:-}" = 1 ] || gcloud compute instances remove-metadata "$vm" --zone=$Z --keys=tee-container-log-redirect >/dev/null
-  gcloud compute instances stop "$vm" --zone=$Z >/dev/null
-  gcloud compute instances start "$vm" --zone=$Z >/dev/null
-else
-  echo "== create $vm"
-  addr=$(gcloud compute addresses describe "$vm" --region=$R --format='value(address)' 2>/dev/null || true)
-  [ -n "$addr" ] || refuse "reserve a static address named $vm in $R and point $host at it (DNS only) first"
-  gcloud compute instances create "$vm" --zone=$Z --machine-type=n2d-standard-2 \
+# The deployment's VMs (envs/<env>.json "vms"), one per zone. Only the lease holder carries the
+# static IP named "vault-<env>" (keeper/address.js moves it on takeover); a standby has no public IP.
+# Roll: every standby onto the new image first (they come back waiting for the lease), then the
+# holder is stopped -- its last snapshot taken, its lease released -- so a new-image standby takes
+# over and moves the IP; then the old holder starts again on the new image, as the standby.
+vms=$(python3 -c 'import json,sys;print(" ".join(f"{n}:{z}" for n,z in json.load(open(sys.argv[1]))["vms"]))' "$conf")
+holder=$(gcloud compute addresses describe "vault-$env" --region=$R --format='value(users)' 2>/dev/null | sed 's#.*/##')
+[ -n "$(gcloud compute addresses describe "vault-$env" --region=$R --format='value(address)' 2>/dev/null)" ] \
+  || refuse "reserve a static address named vault-$env in $R and point $host at it (DNS only) first"
+setmeta() {   # vm zone
+  gcloud compute instances add-metadata "$1" --zone="$2" --metadata="$meta" >/dev/null
+  [ "${DEBUG:-}" = 1 ] || gcloud compute instances remove-metadata "$1" --zone="$2" --keys=tee-container-log-redirect >/dev/null
+}
+create() {    # vm zone [--address=IP]
+  gcloud compute instances create "$1" --zone="$2" --machine-type=n2d-standard-2 \
     --confidential-compute-type=SEV --shielded-secure-boot --maintenance-policy=TERMINATE \
     --image-project=confidential-space-images --image-family=$family \
-    --service-account="$sa" --scopes=cloud-platform --address="$addr" --tags=vault \
-    --metadata="$meta" >/dev/null
+    --service-account="$sa" --scopes=cloud-platform --tags=vault --metadata="$meta" ${3:---no-address} >/dev/null
+}
+holder_zone=""
+for vz in $vms; do
+  v=${vz%%:*} z=${vz#*:}
+  if [ "$v" = "$holder" ]; then holder_zone=$z; continue; fi
+  if gcloud compute instances describe "$v" --zone="$z" >/dev/null 2>&1; then
+    echo "== standby $v ($z) onto the new image"
+    setmeta "$v" "$z"; gcloud compute instances stop "$v" --zone="$z" >/dev/null; gcloud compute instances start "$v" --zone="$z" >/dev/null
+  else
+    echo "== create $v ($z)"
+    if [ -z "$holder" ] && [ -z "$holder_done" ]; then   # nothing holds the IP yet: the first VM gets it
+      create "$v" "$z" "--address=$(gcloud compute addresses describe "vault-$env" --region=$R --format='value(address)')"; holder_done=1
+    else create "$v" "$z"; fi
+  fi
+done
+if [ -n "$holder" ]; then
+  echo "== $holder ($holder_zone) hands over: stopped, then started on the new image"
+  setmeta "$holder" "$holder_zone"
+  gcloud compute instances stop "$holder" --zone="$holder_zone" >/dev/null
+  gcloud compute instances start "$holder" --zone="$holder_zone" >/dev/null
 fi
 
 echo "== wait for https://$host/attestation to name $digest"

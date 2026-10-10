@@ -19,6 +19,7 @@ import {Snapshots, emptyDirs} from "./snap.js";
 import {blobs, send} from "./blobs.js";
 import {derive} from "./crypto.js";
 import {restorer} from "./restore.js";
+import {claim} from "./address.js";
 import * as asn from "./asn.js";
 import * as gcp from "./gcp.js";
 
@@ -178,6 +179,8 @@ async function main() {
   // the snapshot is the truth: whatever a previous run left on the tmpfs (a container restart) goes
   await emptyDirs(ROOTS);
   await snaps.restore();
+  // the deployment's static IP follows the lease (keeper/address.js): on it before anything serves
+  if (conf.address && existsSync(gcp.TEE_SOCK)) log(`address: ${await claim(await gcp.project(), conf.region, conf.address)}`);
   log(`asn: ${asn.load(join(VAULT, "asn", "ip2asn-v4.tsv.gz"))} ranges`);
 
   const media = blobs({store, keys, tmp: join(DATA, "tmp")});
