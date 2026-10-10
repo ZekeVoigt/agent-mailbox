@@ -180,7 +180,7 @@ async function main() {
   await emptyDirs(ROOTS);
   await snaps.restore();
   // the deployment's static IP follows the lease (keeper/address.js): on it before anything serves
-  if (conf.address && existsSync(gcp.TEE_SOCK)) log(`address: ${await claim(await gcp.project(), conf.region, conf.address)}`);
+  if (conf.address && existsSync(gcp.TEE_SOCK)) log(`address: ${await claim(await gcp.project(), conf.region, conf.address, log)}`);
   log(`asn: ${asn.load(join(VAULT, "asn", "ip2asn-v4.tsv.gz"))} ranges`);
 
   const media = blobs({store, keys, tmp: join(DATA, "tmp")});

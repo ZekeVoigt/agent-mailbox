@@ -15,18 +15,27 @@ async function call(method, path, body) {
   if (!r.ok) throw new Error(`compute ${method} ${path.split("?")[0]}: ${r.status} ${JSON.stringify(o).slice(0, 300)}`);
   return o;
 }
+// a resource's URL as a path under API: Compute names resources with either host
+const rel = url => url.replace(/^https:\/\/(compute|www)\.googleapis\.com\/compute\/v1\//, "");
+
 async function done(op) {                    // wait for a zonal operation
   for (let i = 0; i < 120 && op.status !== "DONE"; i++) {
     await new Promise(f => setTimeout(f, 1000));
-    op = await call("GET", op.selfLink.replace(API, ""));
+    op = await call("GET", rel(op.selfLink));
   }
   if (op.error) throw new Error(`compute operation: ${JSON.stringify(op.error).slice(0, 300)}`);
   return op;
 }
-const rel = url => url.replace(API, "").replace(/^https:\/\/www\.googleapis\.com\/compute\/v1\//, "");
 
-// put `address` (a regional static IP's name) on this VM; returns what was done, for the log
-export async function claim(project, region, address) {
+// put `address` (a regional static IP's name) on this VM, retrying (an operation can race the old
+// holder's own shutdown); returns what was done, for the log
+export async function claim(project, region, address, log = () => {}) {
+  for (let i = 1; ; i++) {
+    try { return await claimOnce(project, region, address); }
+    catch (e) { if (i >= 6) throw e; log(`address: try ${i} failed (${e.message.slice(0, 160)}); again`); await new Promise(f => setTimeout(f, 3000 * i)); }
+  }
+}
+async function claimOnce(project, region, address) {
   const zone = (await meta("instance/zone")).split("/").pop(), name = await meta("instance/name");
   const mine = `projects/${project}/zones/${zone}/instances/${name}`;
   const addr = await call("GET", `projects/${project}/regions/${region}/addresses/${address}`);
