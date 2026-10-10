@@ -92,7 +92,15 @@ if [ -n "$holder" ]; then
     echo "== wait for $v to be a ready standby"
     i=0; until ready "$v" "$rolled"; do i=$((i + 1)); [ $i -gt 90 ] && refuse "$v did not come up as a standby within 15 minutes; $holder still serves"; sleep 10; done
   done
-  echo "== $holder ($holder_zone) hands over: stopped, then started on the new image"
+  if [ -n "$(echo $vms | tr ' ' '\n' | grep -v "^$holder:")" ]; then
+    # step down while its VM still runs (Compute queues an IP move off a stopping VM until it stops)
+    echo "== $holder ($holder_zone) hands over to the standby"
+    printf '{}' | gcloud storage cp - "gs://$bucket/handover/$holder" >/dev/null
+    i=0; until [ "$(gcloud compute addresses describe "vault-$env" --region=$R --format='value(users)' | sed 's#.*/##')" != "$holder" ]; do
+      i=$((i + 1)); if [ $i -gt 12 ]; then echo "   it did not step down within 2 minutes (an older keeper?): stopping it instead"; break; fi; sleep 10; done
+    gcloud storage rm "gs://$bucket/handover/$holder" >/dev/null 2>&1 || true
+  fi
+  echo "== $holder ($holder_zone) restarted on the new image"
   setmeta "$holder" "$holder_zone"
   gcloud compute instances stop "$holder" --zone="$holder_zone" >/dev/null
   gcloud compute instances start "$holder" --zone="$holder_zone" >/dev/null

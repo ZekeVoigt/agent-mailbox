@@ -12,6 +12,7 @@ import {spawn} from "node:child_process";
 import {readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, statSync} from "node:fs";
 import {randomBytes, createHash, X509Certificate} from "node:crypto";
 import {dirname, join} from "node:path";
+import {hostname} from "node:os";
 import {fileURLToPath} from "node:url";
 import {Gcs, Local, Conflict} from "./store.js";
 import {Lease} from "./lease.js";
@@ -240,6 +241,19 @@ async function main() {
     if (stopping) return;
     snaps.take().then(s => s && log(`snapshot ${s}`), e => log(`snapshot failed: ${e.message}`));
   }, SNAP_EVERY);
+  // a planned handover (vault/deploy writes handover/<this host>): step down while this VM still runs,
+  // so the static IP moves in seconds -- Compute queues an IP change on a VM that is stopping until
+  // it has stopped. The container then restarts (restart policy Always) and waits as the standby.
+  const me = hostname();
+  setInterval(async () => {
+    if (stopping) return;
+    try {
+      if (!(await store.head(`handover/${me}`))) return;
+      await store.del(`handover/${me}`);
+      log("handover asked: stepping down");
+      shutdown(0);
+    } catch (e) { log(`handover check: ${e.message}`); }
+  }, 5e3);
   setInterval(() => { if (!stopping) snaps.gc().then(r => (r.manifests || r.blobs) && log(`gc: ${JSON.stringify(r)}`), e => log(`gc failed: ${e.message}`)); }, 3600e3);
   // the app's cron ("17 * * * *"): checked every minute, run once in minute 17 of each hour
   let ran = -1;
