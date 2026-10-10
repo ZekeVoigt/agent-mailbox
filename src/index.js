@@ -17,8 +17,9 @@
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
 import {TILES, prefsOf, SEND, EVERY, OFFER, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
-  errorPage, invitePage} from "./ui.js";
+  errorPage, invitePage, passkeyPage, device} from "./ui.js";
 import {verifyClerk, clerkUser, revokeClerkSessions, configureClerk} from "./auth.js";
+import {newChallenge, createOptions, getOptions, verifyCreate, verifyGet, b64u} from "./passkey.js";
 
 const HOST_NAME = "The Constellation";
 const MAX_TEXT = 4000, MAX_WHY = 200, KEEP = 200;
@@ -198,6 +199,15 @@ export class Directory {
     try { this.sql.exec("ALTER TABLE follow ADD COLUMN state TEXT DEFAULT 'on'"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN links TEXT DEFAULT '[]'"); } catch {}
     try { this.sql.exec("ALTER TABLE person ADD COLUMN test INTEGER DEFAULT 0"); } catch {}
+    // passkeys (src/passkey.js): a person's keys, their one-time recovery codes (digests), and on
+    // each session whether a passkey unlocked it and the challenge it was last given
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS passkey (id TEXT PRIMARY KEY, clerk TEXT, jwk TEXT, alg INTEGER,
+        count INTEGER, name TEXT, at INTEGER, used INTEGER);
+      CREATE INDEX IF NOT EXISTS passkey_clerk ON passkey (clerk);
+      CREATE TABLE IF NOT EXISTS recovery (code TEXT PRIMARY KEY, clerk TEXT, at INTEGER);`);
+    try { this.sql.exec("ALTER TABLE session ADD COLUMN pk INTEGER DEFAULT 0"); } catch {}
+    try { this.sql.exec("ALTER TABLE session ADD COLUMN challenge TEXT"); } catch {}
+    try { this.sql.exec("ALTER TABLE session ADD COLUMN chat INTEGER"); } catch {}
     try { this.sql.exec("ALTER TABLE post ADD COLUMN media TEXT DEFAULT '[]'"); } catch {}
     try { this.sql.exec("ALTER TABLE post ADD COLUMN poll TEXT DEFAULT ''"); } catch {}
     try { this.sql.exec("ALTER TABLE post ADD COLUMN quote TEXT DEFAULT ''"); } catch {}
@@ -288,6 +298,8 @@ export class Directory {
     this.sql.exec("DELETE FROM audit WHERE clerk = ?", clerk);
     this.sql.exec("DELETE FROM finds WHERE clerk = ?", clerk);
     this.sql.exec("DELETE FROM hits WHERE clerk = ?", clerk);
+    this.sql.exec("DELETE FROM passkey WHERE clerk = ?", clerk);
+    this.sql.exec("DELETE FROM recovery WHERE clerk = ?", clerk);
   }
 
   async fetch(req) {
@@ -462,7 +474,7 @@ export class Directory {
     if (p === "/session-new") {
       this.sql.exec("DELETE FROM session WHERE at < ? OR seen < ?", now - SESSION_MAX,
         now - SESSION_IDLE);
-      this.sql.exec("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)", b.id, b.clerk, now, now,
+      this.sql.exec("INSERT INTO session (id, clerk, at, seen, ua, ip) VALUES (?, ?, ?, ?, ?, ?)", b.id, b.clerk, now, now,
         b.ua, b.ip);
       return json({ok: true});
     }
@@ -475,7 +487,58 @@ export class Directory {
       }
       if (now - s.seen > 600e3)
         this.sql.exec("UPDATE session SET seen = ?, ip = ? WHERE id = ?", now, b.ip, b.id);
-      return json({clerk: s.clerk});
+      return json({clerk: s.clerk, pk: !!s.pk,
+        has: this.one("SELECT count(*) n FROM passkey WHERE clerk = ?", s.clerk).n > 0});
+    }
+    // -- passkeys: the session's challenge, the person's keys, adding, using, recovering ----------
+    if (p === "/pk-keys") return json({keys: this.all("SELECT id, name, at, used FROM passkey WHERE clerk = ? ORDER BY at", b.clerk),
+      codes: this.one("SELECT count(*) n FROM recovery WHERE clerk = ?", b.clerk).n});
+    if (p === "/pk-challenge") {
+      this.sql.exec("UPDATE session SET challenge = ?, chat = ? WHERE id = ?", b.challenge, now, b.id);
+      return json({ok: true});
+    }
+    if (p === "/pk-state") {          // the challenge is used once: taken here
+      const s = this.one("SELECT clerk, pk, challenge, chat FROM session WHERE id = ?", b.id);
+      if (!s) return json(null);
+      this.sql.exec("UPDATE session SET challenge = NULL WHERE id = ?", b.id);
+      return json({clerk: s.clerk, pk: !!s.pk, challenge: s.chat > now - 300e3 ? s.challenge : null,
+        keys: this.all("SELECT id, jwk, alg, count, name, at, used FROM passkey WHERE clerk = ? ORDER BY at", s.clerk)
+          .map(k => ({...k, jwk: JSON.parse(k.jwk)})),
+        codes: this.one("SELECT count(*) n FROM recovery WHERE clerk = ?", s.clerk).n});
+    }
+    if (p === "/pk-add") {
+      const k = b.key;
+      this.sql.exec("INSERT INTO passkey (id, clerk, jwk, alg, count, name, at, used) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", k.id, b.clerk, JSON.stringify(k.jwk),
+        k.alg, k.count, String(b.name || "Passkey").slice(0, 40), now, now);
+      if (b.codes) {
+        this.sql.exec("DELETE FROM recovery WHERE clerk = ?", b.clerk);
+        for (const c of b.codes) this.sql.exec("INSERT INTO recovery (code, clerk, at) VALUES (?, ?, ?)", c, b.clerk, now);
+      }
+      this.sql.exec("UPDATE session SET pk = 1 WHERE id = ?", b.id);
+      return json({ok: true});
+    }
+    if (p === "/pk-used") {
+      this.sql.exec("UPDATE passkey SET count = ?, used = ? WHERE id = ? AND clerk = ?", b.count, now, b.key, b.clerk);
+      this.sql.exec("UPDATE session SET pk = 1 WHERE id = ?", b.id);
+      return json({ok: true});
+    }
+    if (p === "/pk-recover") {
+      const c = this.one("SELECT code FROM recovery WHERE code = ? AND clerk = ?", b.code, b.clerk);
+      if (!c) return json({ok: false});
+      this.sql.exec("DELETE FROM recovery WHERE code = ?", b.code);
+      this.sql.exec("UPDATE session SET pk = 1 WHERE id = ?", b.id);
+      return json({ok: true, left: this.one("SELECT count(*) n FROM recovery WHERE clerk = ?", b.clerk).n});
+    }
+    if (p === "/pk-remove") {
+      if (this.one("SELECT count(*) n FROM passkey WHERE clerk = ?", b.clerk).n < 2)
+        return json({error: "Keep at least one passkey: add another before removing this one."});
+      this.sql.exec("DELETE FROM passkey WHERE id = ? AND clerk = ?", b.key, b.clerk);
+      return json({ok: true});
+    }
+    if (p === "/pk-codes") {
+      this.sql.exec("DELETE FROM recovery WHERE clerk = ?", b.clerk);
+      for (const c of b.codes) this.sql.exec("INSERT INTO recovery (code, clerk, at) VALUES (?, ?, ?)", c, b.clerk, now);
+      return json({ok: true});
     }
     if (p === "/session-end") {
       this.sql.exec("DELETE FROM session WHERE id = ?", b.id);
@@ -1359,7 +1422,7 @@ async function sessionOf(env, req) {
   const id = await digest(m[1]);
   const s = await call(dir(env), "/session-get", {id, ip: who(req).ip});
   if (!s) await missed(env, req);     // an unknown cookie counts as a miss
-  return s && {clerk: s.clerk, id, sid: id.slice(0, 16)};
+  return s && {clerk: s.clerk, id, sid: id.slice(0, 16), pk: !!s.pk, has: !!s.has};
 }
 
 async function newSession(env, req, clerk) {
@@ -1445,10 +1508,11 @@ async function home(env, person, ses, note = "", start = null, setup = "") {
   }
   const handles = new Set([person.handle]);
   for (const a of agents) for (const x of a.peers) handles.add(x.handle);
-  const [sessions, log, profiles, unread] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
+  const [sessions, log, profiles, unread, pk] = await Promise.all([call(dir(env), "/sessions", {clerk: ses.clerk}),
     call(dir(env), "/audit", {clerk: ses.clerk}), call(dir(env), "/profiles", {handles: [...handles]}),
-    call(dir(env), "/notif-count", {handle: person.handle})]);
+    call(dir(env), "/notif-count", {handle: person.handle}), call(dir(env), "/pk-keys", {clerk: ses.clerk})]);
   return homePage({person, agents, note, start, sessions, log, current: ses.sid, profiles, setup, gifs: !!env.GIPHY_KEY,
+    keys: pk.keys, codes: pk.codes,
     offered: offered(env, person),
     unread: unread.n});
 }
@@ -1582,6 +1646,19 @@ async function postHome(req, env, url) {
     await call(dir(env), "/session-end-one", {clerk: ses.clerk, sid: String(f.sid || "")});
     await log("Signed out a device");
     return back("settings");
+  }
+  if (f.do === "pk-remove") {
+    const got = await call(dir(env), "/pk-remove", {clerk: ses.clerk, key: String(f.key || "")});
+    if (got.error) return home(env, person, ses, got.error);
+    await log("Removed a passkey");
+    return back("settings");
+  }
+  if (f.do === "pk-codes") {          // shown once, here; only their digests are kept
+    const codes = recoveryCodes();
+    await call(dir(env), "/pk-codes", {clerk: ses.clerk, codes: await Promise.all(codes.map(c => digest(c)))});
+    await log("Made new recovery codes");
+    return home(env, person, ses, "Your new recovery codes (the old ones no longer work) -- save them now, " +
+      "they are shown only once: " + codes.join("  "));
   }
   if (f.do === "end-all") {
     await call(dir(env), "/session-end-all", {clerk: ses.clerk});
@@ -2039,6 +2116,63 @@ async function adminRoute(req, env, op) {
   return text("Unknown.", 404);
 }
 
+// -- passkeys: the routes the passkey page calls (same-origin JSON, a Clerk session required) ------
+const CODE_ALPH = "abcdefghjkmnpqrstuvwxyz23456789";
+const recoveryCodes = () => Array.from({length: 8}, () => [...crypto.getRandomValues(new Uint8Array(10))]
+  .map(b => CODE_ALPH[b % CODE_ALPH.length]).join(""));
+
+async function passkeyRoute(req, env, url, ses) {
+  if (!sameOrigin(req, url)) return json({error: "That didn't come from this site."}, 403);
+  const b = await req.json().catch(() => ({}));
+  const rp = {rpId: url.hostname, origin: url.origin};
+  if (url.pathname === "/passkey/options") {
+    const st = await call(dir(env), "/pk-state", {id: ses.id});
+    const challenge = newChallenge();
+    await call(dir(env), "/pk-challenge", {id: ses.id, challenge});
+    if (b.mode === "create") {
+      if (st.keys.length && !st.pk) return json({error: "Unlock with a passkey you have first."}, 403);
+      const person = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
+      const uid = b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("constellation:" + ses.clerk)));
+      return json(createOptions(rp.rpId, {id: uid, name: person ? "@" + person.handle : "The Constellation"},
+        challenge, st.keys.map(k => k.id)));
+    }
+    if (!st.keys.length) return json({error: "There's no passkey on this account yet."}, 409);
+    return json(getOptions(rp.rpId, challenge, st.keys.map(k => k.id)));
+  }
+  const st = await call(dir(env), "/pk-state", {id: ses.id});        // takes the challenge: once
+  if (url.pathname === "/passkey/create") {
+    if (st.keys.length && !st.pk) return json({error: "Unlock with a passkey you have first."}, 403);
+    if (!st.challenge) return json({error: "That took too long: try again."}, 400);
+    let key;
+    try { key = await verifyCreate(b, {...rp, challenge: st.challenge}); }
+    catch (e) { return json({error: "That passkey couldn't be checked: try again."}, 400); }
+    const codes = st.keys.length ? null : recoveryCodes();
+    await call(dir(env), "/pk-add", {id: ses.id, clerk: ses.clerk, key, name: device(req.headers.get("user-agent")),
+      codes: codes && await Promise.all(codes.map(c => digest(c)))});
+    await audit(env, req, ses.clerk, "Added a passkey");
+    return json({ok: true, codes});
+  }
+  if (url.pathname === "/passkey/get") {
+    if (!st.challenge) return json({error: "That took too long: try again."}, 400);
+    const k = st.keys.find(x => x.id === b.id);
+    let count = null;
+    if (k) try { count = await verifyGet(b, k, {...rp, challenge: st.challenge}); } catch {}
+    if (count === null) return (await missed(env, req)) || json({error: "That passkey didn't unlock this account."}, 400);
+    await call(dir(env), "/pk-used", {id: ses.id, clerk: ses.clerk, key: k.id, count});
+    await audit(env, req, ses.clerk, "Unlocked with a passkey");
+    return json({ok: true});
+  }
+  if (url.pathname === "/passkey/recover") {
+    const code = String(b.code || "").replace(/[\s-]/g, "").toLowerCase();
+    const got = /^[a-z0-9]{10}$/.test(code) &&
+      await call(dir(env), "/pk-recover", {id: ses.id, clerk: ses.clerk, code: await digest(code)});
+    if (!got || !got.ok) return (await missed(env, req)) || json({error: "That code doesn't work."}, 400);
+    await audit(env, req, ses.clerk, `Unlocked with a recovery code (${got.left} left)`);
+    return json({ok: true, left: got.left});
+  }
+  return text("Unknown address.", 404);
+}
+
 // -- rate limits at the edge (Cloudflare's rate-limit bindings), per IP: every request (RL_IP), and
 // misses -- a link, invite, cookie or admin key that is wrong -- (RL_MISS). An IP over the miss limit
 // is refused before any lookup until the minute is out. Without the bindings, nothing is limited here.
@@ -2095,6 +2229,21 @@ async function route(req, env) {
     const r = signedOutPage();
     r.headers.append("set-cookie", clearCookie);
     return r;
+  }
+  // passkeys: a Clerk session opens nothing until one of the person's passkeys (or a recovery code)
+  // unlocks it; someone without a passkey yet makes one first (src/passkey.js)
+  if (url.pathname === "/home" || url.pathname.startsWith("/home/") || url.pathname.startsWith("/passkey/")) {
+    const ses = await sessionOf(env, req);
+    if (url.pathname.startsWith("/passkey/")) {
+      if (!ses) return url.pathname === "/passkey/add" ? Response.redirect(`${url.origin}/`, 303) : json({error: "Sign in again."}, 401);
+      if (url.pathname === "/passkey/add" && req.method === "GET")
+        return ses.pk ? passkeyPage("add", q.recovered ? "You're in with a recovery code. Add a passkey on this " +
+          "device now, so you don't need another." : "") : passkeyPage(ses.has ? "unlock" : "setup");
+      if (req.method === "POST") return passkeyRoute(req, env, url, ses);
+      return text("Unknown address.", 404);
+    }
+    if (ses && !ses.pk) return url.pathname === "/home" ? passkeyPage(ses.has ? "unlock" : "setup")
+      : json({error: "Unlock with your passkey first."}, 401);
   }
   if (url.pathname === "/home") return req.method === "POST" ? postHome(req, env, url) : getHome(req, env);
   if (url.pathname.startsWith("/home/")) return canvasRoute(req, env, url);

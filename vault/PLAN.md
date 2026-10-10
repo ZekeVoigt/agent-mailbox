@@ -75,7 +75,8 @@ DNS is the operator's, so Certificate Transparency is watched for a certificate 
 6. **Failover -- DONE 2026-10-10.** Two VMs per deployment; the static IP follows the lease
    (keeper/address.js); a planned handover steps down first (handover/<host>). Measured on staging:
    about 1 min for a release, about 55 s from a hard reset.
-7. **Later.** Passkey-signed approvals checked in the Vault.
+7. **Passkeys -- DONE 2026-10-11.** Every session is unlocked by the person's passkey, checked in the
+   Vault (src/passkey.js), after Clerk: a Clerk session alone opens nothing.
 
 ## Steps only the owner can take
 

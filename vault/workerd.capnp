@@ -28,6 +28,7 @@ const constellation :Workerd.Worker = (
     (name = "src/auth.js", esModule = embed "../src/auth.js"),
     (name = "src/box.js", esModule = embed "../src/box.js"),
     (name = "src/look.js", esModule = embed "../src/look.js"),
+    (name = "src/passkey.js", esModule = embed "../src/passkey.js"),
   ],
   compatibilityDate = "2026-10-01",
   bindings = [

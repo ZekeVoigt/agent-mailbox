@@ -842,7 +842,7 @@ went wrong</h1><p>That didn't work on our side. Go back and try again.</p>
   {kind: "join", status: 500});
 
 const when = at => new Date(at).toISOString().slice(0, 16).replace("T", " ") + " UTC";
-function device(ua) {               // a short, human name for a browser
+export function device(ua) {        // a short, human name for a browser
   ua = String(ua || "");
   const os = /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" :
     /Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
@@ -942,7 +942,8 @@ function graph(person, agents, profiles) {
 }
 
 export function homePage({person, agents, note = "", start = null, sessions = [], log = [],
-                          current = "", profiles = {}, setup = "", unread = 0, gifs = false, offered}) {
+                          current = "", profiles = {}, setup = "", unread = 0, gifs = false, offered, keys = [],
+                          codes = 0}) {
   const now = Date.now(), self = "/home";
   const asked = [];
   for (const a of agents) {
@@ -1006,6 +1007,13 @@ class="why">${esc(device(x.ua))}${x.sid === current ? " <small>· this browser</
     x.sid === current ? "" : act({do: "end-session", sid: x.sid}, "Sign out", true)}</div>`).join("")}</div>
 <div class="signout-here"><form method="post" action="/signout"><button class="ghost">Sign out</button></form></div>
 ${act({do: "end-all"}, "Sign out everywhere", true)}`;
+  const passkeys = `<h2>Passkeys</h2><p class="low">Your passkeys unlock this account after you sign in. They are
+checked inside the sealed Constellation, so no one else -- not even the people who run it -- can open your
+account. ${codes} recovery code${codes === 1 ? "" : "s"} left.</p><div class="rows">${keys.map(k => `<div class="row"><span
+class="why">${esc(k.name)}<br><small>added ${when(k.at)} · last used ${ago(now - (k.used || k.at))}</small></span>${
+    keys.length > 1 ? act({do: "pk-remove", key: k.id}, "Remove", true) : ""}</div>`).join("")}</div>
+<p><a class="btn ghost" href="/passkey/add">Add a passkey on this device</a></p>
+${act({do: "pk-codes"}, "Make new recovery codes", true)}`;
   const activity = `<h2>Security activity</h2><div class="rows">${log.length ? log.map(x =>
     `<div class="row"><span class="why">${esc(x.what)}<br><small>${when(x.at)} · ${esc(x.ip || "")} · ${
     esc(device(x.ua))}</small></span></div>`).join("") : "<p>Nothing yet.</p>"}</div>`;
@@ -1033,7 +1041,7 @@ for 30 days.</p><div class="rows">${requests}</div></section><h2 class="earlier"
     ["profile", "Profile", "", `<div class="pp"><div class="bd" data-page="${esc(person.handle)}"></div></div>`,
       null, true],
     ["settings", "Settings", "Privacy, where you're signed in, and what happened on your account.",
-      privacy + devices + activity + danger, GEAR, true],
+      privacy + passkeys + devices + activity + danger, GEAR, true],
   ];
   const first = start || (!agents.length ? "add" : "home");
   const main = views.map(([v, t, d, body]) => `<section class="view" id="${v}"${v === first ? "" : " hidden"}>
@@ -1998,3 +2006,79 @@ const NOTIFS = `
   if (!view.hidden) load();
   setInterval(function(){ if (!document.hidden) count(); }, 30000);
 })();`;
+
+// -- passkeys (src/passkey.js): set one up, unlock with one, add another -------------------------
+const PASSKEY = `(function () {
+  var b64u = function (b) { var s = "", a = new Uint8Array(b); for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+    return btoa(s).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, ""); };
+  var unb = function (s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "=";
+    return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); }); };
+  var said = document.getElementById("said");
+  var say = function (m) { said.textContent = m; said.hidden = !m; };
+  var post = async function (path, body) {
+    var r = await fetch(path, {method: "POST", credentials: "same-origin", headers: {"content-type": "application/json"},
+      body: JSON.stringify(body || {})});
+    var o = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(o.error || "That didn't work: try again.");
+    return o;
+  };
+  var make = document.getElementById("make"), use = document.getElementById("use"), rec = document.getElementById("rec");
+  if (!window.PublicKeyCredential) say("This browser can't use passkeys. Try Safari, Chrome or Edge, or your phone.");
+  if (make) make.onclick = async function () {
+    say(""); make.disabled = true;
+    try {
+      var o = await post("/passkey/options", {mode: "create"});
+      o.challenge = unb(o.challenge); o.user.id = unb(o.user.id);
+      o.excludeCredentials = o.excludeCredentials.map(function (c) { return {type: c.type, id: unb(c.id)}; });
+      var c = await navigator.credentials.create({publicKey: o});
+      var got = await post("/passkey/create", {id: c.id, clientDataJSON: b64u(c.response.clientDataJSON),
+        attestationObject: b64u(c.response.attestationObject)});
+      if (got.codes) {
+        document.getElementById("first").hidden = true;
+        var box = document.getElementById("codes");
+        box.querySelector("pre").textContent = got.codes.join("\\n");
+        box.hidden = false;
+      } else location.href = "/home";
+    } catch (e) { say(e.name === "NotAllowedError" ? "No passkey was made." : e.message); make.disabled = false; }
+  };
+  if (use) use.onclick = async function () {
+    say(""); use.disabled = true;
+    try {
+      var o = await post("/passkey/options", {mode: "get"});
+      o.challenge = unb(o.challenge);
+      o.allowCredentials = o.allowCredentials.map(function (c) { return {type: c.type, id: unb(c.id)}; });
+      var a = await navigator.credentials.get({publicKey: o});
+      await post("/passkey/get", {id: a.id, clientDataJSON: b64u(a.response.clientDataJSON),
+        authenticatorData: b64u(a.response.authenticatorData), signature: b64u(a.response.signature)});
+      location.href = "/home";
+    } catch (e) { say(e.name === "NotAllowedError" ? "The passkey wasn't used." : e.message); use.disabled = false; }
+  };
+  if (rec) rec.onsubmit = async function (e) {
+    e.preventDefault(); say("");
+    try { await post("/passkey/recover", {code: rec.code.value}); location.href = "/passkey/add?recovered=1"; }
+    catch (err) { say(err.message); }
+  };
+})();`;
+
+export function passkeyPage(mode, note = "") {
+  const out = `<form method="post" action="/signout"><button class="ghost">Sign out</button></form>`;
+  const codes = `<div id="codes" hidden><h1>Save your recovery codes</h1><p>Each opens your account once if you lose
+every passkey. Keep them somewhere safe, like a password manager: they are shown only now, and no one -- not
+even the people who run this site -- can recover your account without them.</p><pre class="mem"></pre>
+<p><a class="btn" href="/home">I've saved them</a></p></div>`;
+  const body = mode === "unlock" ? `<div class="j invited"><h1>Unlock with your passkey</h1>
+<p>Your account is protected by a passkey: Face ID, Touch ID, or your device's lock.</p>
+<p><button id="use">Use my passkey</button></p><p id="said" class="err" hidden></p>
+<details><summary>Lost your passkey?</summary><form id="rec"><p><label>A recovery code<input name="code"
+autocomplete="one-time-code" required></label></p><button class="ghost">Unlock with the code</button></form></details>${out}</div>`
+    : mode === "add" ? `<div class="j invited"><div id="first"><h1>Add a passkey</h1>${note ? `<p class="low">${esc(note)}</p>` : ""}
+<p>Add a passkey on this device, so it can unlock your account too.</p>
+<p><button id="make">Add a passkey</button></p><p id="said" class="err" hidden></p>
+<p><a href="/home">Not now</a></p></div>${codes}</div>`
+    : `<div class="j invited"><div id="first"><h1>Protect your account with a passkey</h1>
+<p>From now on, signing in also takes a passkey -- Face ID, Touch ID, or your device's lock. It is checked
+inside the sealed Constellation, so no one else, not even the people who run this site, can open your
+account, read your conversations or answer for you.</p>
+<p><button id="make">Create my passkey</button></p><p id="said" class="err" hidden></p>${out}</div>${codes}</div>`;
+  return page(mode === "unlock" ? "Unlock" : "Passkey", body, {kind: "join", frameScript: PASSKEY});
+}

@@ -90,14 +90,113 @@ def refused(fn):
         return 400 <= e.code < 500
 
 
-def session(uid):
-    """A new browser signed in as this Clerk user: its own Clerk session, this site's cookie."""
+# -- a software passkey (src/passkey.js): RS256 with a fresh 2048-bit key a run, the standard
+# library only -- a minimal CBOR writer, PKCS#1 v1.5 signing by hand
+import base64, hashlib, secrets as S_
+
+
+def _b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _prime(bits):
+    while True:
+        n = S_.randbits(bits) | (1 << (bits - 1)) | 1
+        if all(n % p for p in (3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)) and all(
+                pow(S_.randbelow(n - 3) + 2, n - 1, n) == 1 for _ in range(24)):
+            return n
+
+
+def _rsa():
+    while True:
+        p, q = _prime(1024), _prime(1024)
+        phi = (p - 1) * (q - 1)
+        try:
+            return p * q, 65537, pow(65537, -1, phi)
+        except ValueError:
+            continue
+
+
+def _cbor(x):
+    def head(major, n):
+        if n < 24: return bytes([major << 5 | n])
+        for k, f in ((24, 1), (25, 2), (26, 4), (27, 8)):
+            if n < 1 << (8 * f): return bytes([major << 5 | k]) + n.to_bytes(f, "big")
+    if isinstance(x, bool): return bytes([0xf5 if x else 0xf4])
+    if isinstance(x, int): return head(0, x) if x >= 0 else head(1, -1 - x)
+    if isinstance(x, bytes): return head(2, len(x)) + x
+    if isinstance(x, str): return head(3, len(x.encode())) + x.encode()
+    if isinstance(x, list): return head(4, len(x)) + b"".join(_cbor(v) for v in x)
+    if isinstance(x, dict): return head(5, len(x)) + b"".join(_cbor(k) + _cbor(v) for k, v in x.items())
+    raise TypeError(x)
+
+
+class Passkey:
+    """One person's authenticator: their credential, its key and its counter."""
+    def __init__(self):
+        self.n, self.e, self.d = _rsa()
+        self.id, self.count = S_.token_bytes(32), 0
+
+    def sign(self, data):
+        k = (self.n.bit_length() + 7) // 8
+        info = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(data).digest()
+        em = b"\x00\x01" + b"\xff" * (k - len(info) - 3) + b"\x00" + info
+        return pow(int.from_bytes(em, "big"), self.d, self.n).to_bytes(k, "big")
+
+    def _client(self, kind, challenge):
+        return json.dumps({"type": kind, "challenge": challenge, "origin": B, "crossOrigin": False}).encode()
+
+    def _rp(self):
+        return hashlib.sha256(U.urlparse(B).hostname.encode()).digest()
+
+    def create(self, challenge):
+        cose = {1: 3, 3: -257, -1: self.n.to_bytes(256, "big"), -2: self.e.to_bytes(3, "big")}
+        auth = self._rp() + bytes([0x45]) + (0).to_bytes(4, "big") + bytes(16) + len(self.id).to_bytes(2, "big") \
+            + self.id + _cbor(cose)
+        return {"id": _b64u(self.id), "clientDataJSON": _b64u(self._client("webauthn.create", challenge)),
+                "attestationObject": _b64u(_cbor({"fmt": "none", "attStmt": {}, "authData": auth}))}
+
+    def get(self, challenge, cred_id=None):
+        self.count += 1
+        cd = self._client("webauthn.get", challenge)
+        auth = self._rp() + bytes([0x05]) + self.count.to_bytes(4, "big")
+        return {"id": cred_id or _b64u(self.id), "clientDataJSON": _b64u(cd), "authenticatorData": _b64u(auth),
+                "signature": _b64u(self.sign(auth + hashlib.sha256(cd).digest()))}
+
+
+passkeys = {}      # Clerk user id -> their Passkey
+recovery = {}      # Clerk user id -> the recovery codes their first passkey came with
+
+
+def jsend(op, path, body):
+    with op.open(R.Request(B + path, json.dumps(body).encode(), headers={**UA, "content-type": "application/json",
+                                                                          "Origin": B}), timeout=30) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def unlock(op, uid):
+    """The passkey step after Clerk: make one (the person's first browser), else use it."""
+    if uid not in passkeys:
+        passkeys[uid] = Passkey()
+        o = jsend(op, "/passkey/options", {"mode": "create"})
+        got = jsend(op, "/passkey/create", passkeys[uid].create(o["challenge"]))
+        recovery[uid] = got["codes"]
+    else:
+        o = jsend(op, "/passkey/options", {"mode": "get"})
+        jsend(op, "/passkey/get", passkeys[uid].get(o["challenge"]))
+
+
+def session(uid, passkey=True):
+    """A new browser signed in as this Clerk user: its own Clerk session, this site's cookie, and
+    (unless passkey=False) unlocked with the person's passkey -- made on their first sign-in."""
     sid = clerk("POST", "/sessions", {"user_id": uid})["id"]
     token = clerk("POST", f"/sessions/{sid}/tokens")["jwt"]
     op = R.build_opener(R.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     op.open(R.Request(B + "/session", json.dumps({"token": token}).encode(),
                       headers={**UA, "content-type": "application/json", "Origin": B}),
             timeout=30).read()
+    if passkey:
+        unlock(op, uid)
     return op
 
 
@@ -205,8 +304,33 @@ def main():
     check(exchange(browser_token(uname, "https://other-app.example")) == 401,
           "a real Clerk token minted for another site (azp) is refused")
     ok = exchange(browser_token(uname, B))
-    check(not isinstance(ok, int) and "Welcome" in get(B + "/home", ok),
-          "the same person's token minted on this site signs in")
+    first = get(B + "/home", ok) if not isinstance(ok, int) else ""
+    check("Protect your account with a passkey" in first and refused(lambda: get(B + "/home/notif-count", ok)),
+          "the same person's token minted on this site signs in -- and opens nothing until a passkey is made")
+    unlock(ok, au["id"])
+    check(len(recovery[au["id"]]) == 8 and "Welcome" in get(B + "/home", ok),
+          "a passkey made: the dashboard opens, and 8 recovery codes are shown once")
+    # passkeys: Clerk alone, in another browser, opens nothing; only this person's passkey unlocks it
+    other = session(au["id"], passkey=False)
+    check("Unlock with your passkey" in get(B + "/home", other) and refused(lambda: get(B + "/home/notif-count", other)),
+          "a second Clerk sign-in (even one minted with Clerk's secret key) sees only the unlock page")
+    o = jsend(other, "/passkey/options", {"mode": "get"})
+    stolen = Passkey().get(o["challenge"], cred_id=_b64u(passkeys[au["id"]].id))
+    check(refused(lambda: jsend(other, "/passkey/get", stolen)), "a signature from another key is refused")
+    o = jsend(other, "/passkey/options", {"mode": "get"})
+    good = passkeys[au["id"]].get(o["challenge"])
+    jsend(other, "/passkey/get", good)
+    check("Welcome" in get(B + "/home", other), "the person's own passkey unlocks the second browser")
+    third = session(au["id"], passkey=False)
+    jsend(third, "/passkey/options", {"mode": "get"})
+    check(refused(lambda: jsend(third, "/passkey/get", good)), "a replayed passkey answer is refused")
+    code = recovery[au["id"]][0]
+    jsend(third, "/passkey/recover", {"code": code})
+    fourth = session(au["id"], passkey=False)
+    check("Welcome" in get(B + "/home", third) and refused(lambda: jsend(fourth, "/passkey/recover", {"code": code})),
+          "a recovery code unlocks once, and never again")
+    check(refused(lambda: jsend(fourth, "/passkey/options", {"mode": "create"})),
+          "a locked browser cannot add its own passkey to someone's account")
     try:
         anon = get(B + "/home")
     except Exception:
