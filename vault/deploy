@@ -65,7 +65,8 @@ fi
 
 echo "== wait for https://$host/attestation to name $digest"
 i=0
-until python3 vault/verify.py "https://$host" --digest "$digest" --quiet 2>/dev/null; do
+dbg=""; [ "${DEBUG:-}" = 1 ] && dbg=--allow-debug
+until python3 vault/verify.py "https://$host" --digest "$digest" $dbg --quiet 2>/dev/null; do
   i=$((i + 1)); [ $i -gt 90 ] && refuse "the new image did not come up within 15 minutes (it keeps its KMS grant: look at the VM)"
   sleep 10
 done
