@@ -72,7 +72,10 @@ DNS is the operator's, so Certificate Transparency is watched for a certificate 
    link is replaced, minted inside the Vault (Cloudflare saw the old ones), and link instructions
    put the link on its own line and say how it ends (Muse once appended "ED"). Then DNS for
    agents.ai-andromeda.com moves to the Vault, grey cloud, and the Worker is retired.
-6. **Later.** Passkey-signed approvals checked in the Vault; a second VM for failover.
+6. **Failover -- DONE 2026-10-10.** Two VMs per deployment; the static IP follows the lease
+   (keeper/address.js); a planned handover steps down first (handover/<host>). Measured on staging:
+   about 1 min for a release, about 55 s from a hard reset.
+7. **Later.** Passkey-signed approvals checked in the Vault.
 
 ## Steps only the owner can take
 

@@ -28,7 +28,7 @@ Keep this file true: a change that alters any statement here updates it in the s
 | Restores | the owner's restore puts the directory back as the newest snapshot at or before the time asked had it (snapshots: every 15 s for an hour, hourly for a day, daily for a week), then makes every deletion since -- and in the 10 minutes before -- again, from a ledger the restore does not touch, so a restore never brings back a deleted account or agent. Agents' conversations are never restored |
 | Releases | only through `vault/deploy` (below): a clean tree, a reproducible no-cache build, KMS granted to the new digest only (and it appended to vault/DIGESTS), the VM restarted onto it -- its last snapshot taken and its lease released first -- then KMS revoked for every other digest once the new one is attested live |
 | Rate limits | per IP, inside the VM, exact: 1200 requests a minute (what Cloudflare's approximate 600 let through: 1167 of a 1500 burst), and 30 wrong secrets a minute (a link, invite, cookie or admin key that is wrong) -- an IP past that is refused before any lookup until the minute is out. There is no Cloudflare in front: a flood that fills the VM's network is not absorbed |
-| Scale | one sealed VM (2 vCPU, 8 GB, the state in 4 GB of RAM) holds tens of thousands of agents; a second VM for failover is owed (below) |
+| Scale and failover | two sealed VMs in two zones (2 vCPU, 8 GB each, the state in 4 GB of RAM; tens of thousands of agents). One serves; the other waits for the lease. Only the lease holder carries the public IP: a standby has none, and reaches Google's APIs privately. When the holder dies, its lease lapses within 45 s and the standby restores the newest snapshot, moves the IP onto itself and serves -- measured: about 55 s from a hard reset to serving, up to 15 s of writes lost. A release hands over while the old VM still runs: about a minute, nothing lost |
 | Logs | the production Confidential Space image sends no container output anywhere (`log_redirect` is debug-only, and only staging runs the debug image). The operator sees the VM's state (running, stopped), not what it does |
 
 ## What is NOT protected -- say this plainly to anyone who asks
@@ -100,8 +100,6 @@ Keep this file true: a change that alters any statement here updates it in the s
 
 - Set `ADMIN_OWNER` for production in Secret Manager, in the owner's own terminal, and rotate
   `ADMIN`, which has lived in session scratchpads.
-- A second sealed VM for failover (today a VM failure is minutes of downtime and up to 15 s of
-  writes lost).
 - Passkey-signed approvals checked inside the VM, so not even changed code could fake "connected".
 - MFA available, and enforced for staff, on the production Clerk instance.
 - A disclosure policy (security.txt is live; security@ai-andromeda.com forwards to the owner by
