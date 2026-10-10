@@ -25,12 +25,13 @@ export class Lease {
           break;
         }
         if (!said) { this.log(`lease: held by another Vault until ${new Date(cur.until).toISOString()}; waiting`); said = true; }
-        await new Promise(f => setTimeout(f, Math.min(Math.max(cur.until - Date.now(), 0) + 1000, 15e3)));
+        // look again every 5 s: a holder that stops cleanly releases the lease at once
+        await new Promise(f => setTimeout(f, Math.min(Math.max(cur.until - Date.now(), 0) + 1000, 5e3)));
       } catch (e) {
         if (!(e instanceof Conflict)) throw e;   // another took it first: look again
       }
     }
-    this.ok = Date.now();
+    this.ok = Date.now(); this.wasHeld = true;
     this.log("lease: held");
     this.timer = setInterval(() => this.renew().catch(e => this.log(`lease: renew failed: ${e.message}`)), EVERY);
   }

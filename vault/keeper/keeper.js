@@ -19,7 +19,7 @@ import {Snapshots, emptyDirs} from "./snap.js";
 import {blobs, send} from "./blobs.js";
 import {derive} from "./crypto.js";
 import {restorer} from "./restore.js";
-import {claim} from "./address.js";
+import {claim, release} from "./address.js";
 import * as asn from "./asn.js";
 import * as gcp from "./gcp.js";
 
@@ -154,6 +154,8 @@ async function shutdown(code) {
   try { if (snaps && lease && lease.held()) { const s = await snaps.take(true); log(`last snapshot: ${s || "nothing new"}`); } }
   catch (e) { log(`last snapshot failed: ${e.message}`); code = code || 1; }
   if (lease) await lease.release();
+  if (conf.address && existsSync(gcp.TEE_SOCK) && lease && lease.wasHeld)
+    try { log(`address: ${await release(await gcp.project(), conf.region, conf.address)}`); } catch (e) { log(`address: ${e.message.slice(0, 160)}`); }
   process.exit(code);
 }
 

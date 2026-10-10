@@ -55,3 +55,18 @@ async function claimOnce(project, region, address) {
     {name: "vault-address", type: "ONE_TO_ONE_NAT", natIP: addr.address}));
   return `${addr.address} moved to ${name}${users.length ? ` from ${users.map(u => u.split("/").pop()).join(", ")}` : ""}`;
 }
+
+// on the way out (keeper's SIGTERM path, after the lease is released): let go of the static IP at
+// once, so the next holder need not wait for this VM to finish stopping. Not waited for: the call
+// takes this VM's own public IP away, and with it this request's way back.
+export async function release(project, region, address) {
+  const zone = (await meta("instance/zone")).split("/").pop(), name = await meta("instance/name");
+  const mine = `projects/${project}/zones/${zone}/instances/${name}`;
+  const addr = await call("GET", `projects/${project}/regions/${region}/addresses/${address}`);
+  if (!(addr.users || []).map(rel).includes(mine)) return "not held";
+  const nic = (await call("GET", mine)).networkInterfaces[0];
+  for (const ac of nic.accessConfigs || [])
+    if (ac.natIP === addr.address)
+      await call("POST", `${mine}/deleteAccessConfig?accessConfig=${encodeURIComponent(ac.name)}&networkInterface=${nic.name}`);
+  return `${addr.address} let go`;
+}
