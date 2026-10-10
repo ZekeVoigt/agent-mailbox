@@ -1,0 +1,19 @@
+# Every hour, from outside: is agents.ai-andromeda.com still the sealed code, and is every
+# certificate for it one the Vault made? A failure here is an alert (GitHub emails the owner).
+name: watch
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sealed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: The live Vault is the published code (attestation)
+        run: python3 vault/verify.py https://agents.ai-andromeda.com --digests vault/DIGESTS
+      - name: Every certificate for the host is the Vault's (Certificate Transparency)
+        run: python3 vault/ct-watch.py https://agents.ai-andromeda.com --since 2026-10-10

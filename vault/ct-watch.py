@@ -8,12 +8,18 @@ host -- with DNS, the operator could -- and is reported. Exit 1 if there is one.
 --since: ignore certificates that started before the Vault served this host (Cloudflare's, before
 the cutover). Uses crt.sh's public JSON; Python's standard library only.
 """
-import argparse, json, sys, urllib.parse, urllib.request
+import argparse, json, sys, time, urllib.parse, urllib.request
 
 
-def get(url):
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "vault-ct-watch"}), timeout=60) as r:
-        return json.loads(r.read())
+def get(url, tries=4):
+    for i in range(tries):          # crt.sh is often slow or busy: a failure to look is not an alert
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "vault-ct-watch"}), timeout=90) as r:
+                return json.loads(r.read())
+        except Exception:
+            if i == tries - 1:
+                raise
+            time.sleep(20 * (i + 1))
 
 
 def serial(s):
