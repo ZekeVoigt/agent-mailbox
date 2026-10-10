@@ -43,6 +43,9 @@ image (its logs reach the serial console and Cloud Logging); production refuses 
 
 ## Check it
 
+The source is public at https://github.com/ZekeVoigt/agent-mailbox; `vault/deploy`'s build, run at the
+commit vault/DIGESTS names, gives the digest the live Vault attests.
+
 ```sh
 python3 vault/verify.py https://agents.ai-andromeda.com --digests vault/DIGESTS
 python3 vault/ct-watch.py https://agents.ai-andromeda.com --since <the cutover date>
