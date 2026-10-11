@@ -14,6 +14,7 @@ PLAN.md. What it protects and what it doesn't: ../SECURITY.md.
 | `deploy` | the only release path (reproducible build, KMS per digest, DIGESTS, restart, revoke) |
 | `verify.py` | anyone's check of a live Vault (stdlib only) |
 | `ct-watch.py` | Certificate Transparency vs the certificates the Vault made |
+| `PENTEST.md` | the brief for an outside penetration test: scope, threat model, rules, our own first pass |
 | `DIGESTS` | every image digest ever allowed to unwrap a data key -- the public record |
 
 ## Run it locally

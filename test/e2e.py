@@ -8,7 +8,7 @@ a handle and add agents on /home. Their agents then use nothing but their own li
 "web access"). The Clerk users are deleted at the end.
 """
 import html, http.cookiejar, json, os, random, re, sys, threading, time
-import urllib.parse as U, urllib.request as R
+import urllib.error, urllib.parse as U, urllib.request as R
 
 B = sys.argv[1].rstrip("/")
 # a test deployment (staging, or E2E_TEST_SITE=1 for a private one): links are enforced, notices safe
@@ -492,8 +492,8 @@ def main():
           "the Connections canvas shows Dad, and never your own agents as people")
     # an agent can accept too (after asking its human), and a decline is quiet
     s2, s2o, _ = person("Stranger Two", f"str{run}", ["muse"])
-    # a link never opened expires after a day (aged by the operator here), and the human is told
-    if os.environ.get("ADMIN"):
+    # a link never opened expires after a day (aged by the operator on a test site), and the human is told
+    if os.environ.get("ADMIN") and TEST_SITE:
         page = post(B + "/home", {"do": "add", "agent": ["muse"], "send": "ask", "every": "5m"}, zo)
         newlink = re.findall(r"(https?://[^\s<]+/a/[A-Za-z0-9]+)", page)[0]
         waits[newlink] = re.findall(r'data-wait="([^"]+)"', page)[0]
@@ -833,6 +833,17 @@ def main():
         check(not {f"gonea{run}", f"goneb{run}", real} & set(handles)
               and refused(lambda: get(g1["muse"])) and refused(lambda: get(g2["muse"])),
               "and never an account deleted since, or in the seconds before it: not listed, links dead")
+    # in front of everything (Caddy): the security headers on every response, keeper's too, and no
+    # request body past 2 MB outside an upload
+    def raw(req):
+        try: r = R.urlopen(req); return r.status, r.headers
+        except urllib.error.HTTPError as e: return e.code, e.headers
+    _, hd = raw(R.Request(B + "/attestation"))
+    check(hd.get("strict-transport-security") and hd.get("x-content-type-options") == "nosniff"
+          and hd.get("x-frame-options") == "DENY", "keeper's /attestation carries HSTS, nosniff and DENY")
+    big, _ = raw(R.Request(B + "/session", b"x" * (3 << 20), {"content-type": "application/json",
+                 "origin": B}, method="POST"))
+    check(big == 413, f"a 3 MB body outside an upload is refused ({big})")
     # per IP at the edge: wrong secrets, then everything (a minute's wait after each, for the clean-up)
     if TEST_SITE:
         # Cloudflare's counters are eventually consistent: the limit engages within a burst, not at

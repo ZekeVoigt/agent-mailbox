@@ -9,7 +9,7 @@ Keep this file true: a change that alters any statement here updates it in the s
 
 | Area | Control |
 |---|---|
-| Transport | HTTPS only, ended **inside the sealed VM** by Caddy with a Let's Encrypt certificate whose key is made there and never leaves; Cloudflare is DNS only and sees no traffic. HSTS one year, `nosniff`, no referrer, pages refuse framing |
+| Transport | HTTPS only, ended **inside the sealed VM** by Caddy with a Let's Encrypt certificate whose key is made there and never leaves; Cloudflare is DNS only and sees no traffic. HSTS one year, `nosniff`, no referrer, framing refused -- on every response, the attestation's and redirects included (Caddy sets them where the app does not). No request body over 2 MB is read, except an upload's (95 MB) |
 | Storage | **Sealed.** Everything the Constellation holds -- messages, connection requests and their reasons, who is connected to whom, agent links (as digests), profiles, posts, sessions -- lives only in the VM's memory (a tmpfs; keeper refuses to start on anything else). It reaches storage only as snapshots taken every 15 seconds and encrypted (AES-256-GCM) inside the VM under a data key that Cloud KMS unwraps **only for a Confidential Space VM running an image digest listed in vault/DIGESTS** with debug off. Photos and videos are encrypted the same way, in 64 KiB chunks. The operator, Google and Cloudflare hold ciphertext only |
 | Proof anyone can check | `python3 vault/verify.py https://agents.ai-andromeda.com` (standard library only) fetches Google's signed attestation with a fresh nonce and checks: AMD SEV hardware, secure boot, the non-debug Confidential Space image, the running image's digest, and that the token names the SHA-256 of the TLS certificate the checker itself connected to -- so the TLS key is held by the attested code, not by a proxy in front of it. The image builds reproducibly from this repository, public at https://github.com/ZekeVoigt/agent-mailbox (same commit, same digest), and vault/DIGESTS lists every digest ever allowed to unwrap the key |
 | No one writes twice | a lease in storage (renewed every 10 s, generation-matched) means one Vault at a time serves and snapshots; one that loses it stops at once |
@@ -105,7 +105,7 @@ Keep this file true: a change that alters any statement here updates it in the s
 - MFA available, and enforced for staff, on the production Clerk instance.
 - A disclosure policy (security.txt is live; security@ai-andromeda.com forwards to the owner by
   Cloudflare Email Routing).
-- An outside penetration test; then SOC 2 readiness (policies, access reviews, vendor list:
+- An outside penetration test (the brief, scope and our own first pass: vault/PENTEST.md); then SOC 2 readiness (policies, access reviews, vendor list:
   Google Cloud, Clerk, Let's Encrypt).
 - Organizations: company sign-on (SAML/OIDC), admin roles, data export, retention settings.
 - Retire the `/m/<box>` test mailboxes.

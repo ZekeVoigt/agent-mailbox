@@ -2108,13 +2108,13 @@ async function adminRoute(req, env, op) {
     for (const a of await call(dir(env), "/agents-of", {handle})) if (a.id === b.id) await delRef(env, a.link);
     return json({ok: true});
   }
-  if (op === "idle-link" && handle) {
+  if (op === "idle-link" && env.TEST_SITE === "1" && handle) {
     if (!await mayTouch()) return ownerOnly();
     const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
     if (!a) return text("No such agent.", 404);
     return json(await call(agentObj(env, a.id), "/test-idle"));
   }
-  if (op === "age-link" && handle) {
+  if (op === "age-link" && env.TEST_SITE === "1" && handle) {
     if (!await mayTouch()) return ownerOnly();
     const a = (await call(dir(env), "/agents-of", {handle})).find(x => x.id === b.id);
     if (!a) return text("No such agent.", 404);

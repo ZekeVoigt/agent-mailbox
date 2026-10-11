@@ -9,6 +9,22 @@
 }
 
 {$VAULT_HOST} {
+	# every response, keeper's and redirects too, keeps the app's own headers or gets these
+	header {
+		?Strict-Transport-Security "max-age=31536000"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "no-referrer"
+	}
+	# no body is buffered past what its route needs: an upload's 90 MB video, 2 MB for anything else
+	@upload path /home/media
+	request_body @upload {
+		max_size 95MB
+	}
+	@other not path /home/media
+	request_body @other {
+		max_size 2MB
+	}
 	# Google's attestation for this image and the certificates it made, from keeper (only these paths)
 	@attest path /attestation /attestation/certs
 	handle @attest {
