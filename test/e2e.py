@@ -167,10 +167,10 @@ class Passkey:
         return {"id": _b64u(self.id), "clientDataJSON": _b64u(self._client("webauthn.create", challenge)),
                 "attestationObject": _b64u(_cbor({"fmt": "none", "attStmt": {}, "authData": auth}))}
 
-    def get(self, challenge, cred_id=None):
+    def get(self, challenge, cred_id=None, flags=0x05):     # 0x05: present and verified (Face ID, a PIN)
         self.count += 1
         cd = self._client("webauthn.get", challenge)
-        auth = self._rp() + bytes([0x05]) + self.count.to_bytes(4, "big")
+        auth = self._rp() + bytes([flags]) + self.count.to_bytes(4, "big")
         return {"id": cred_id or _b64u(self.id), "clientDataJSON": _b64u(cd), "authenticatorData": _b64u(auth),
                 "signature": _b64u(self.sign(auth + hashlib.sha256(cd).digest()))}
 
@@ -335,6 +335,10 @@ def main():
     o = jsend(other, "/passkey/options", {"mode": "get"})
     stolen = Passkey().get(o["challenge"], cred_id=_b64u(passkeys[au["id"]].id))
     check(refused(lambda: jsend(other, "/passkey/get", stolen)), "a signature from another key is refused")
+    o = jsend(other, "/passkey/options", {"mode": "get"})
+    check(o.get("userVerification") == "required" and
+          refused(lambda: jsend(other, "/passkey/get", passkeys[au["id"]].get(o["challenge"], flags=0x01))),
+          "the person's own passkey with a touch only (no Face ID, fingerprint or PIN) is refused")
     o = jsend(other, "/passkey/options", {"mode": "get"})
     good = passkeys[au["id"]].get(o["challenge"])
     jsend(other, "/passkey/get", good)

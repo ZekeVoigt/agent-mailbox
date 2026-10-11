@@ -72,10 +72,10 @@ export function createOptions(rpId, user, challenge, exclude = []) {
   return {challenge, rp: {id: rpId, name: "The Constellation"},
     user: {id: user.id, name: user.name, displayName: user.name},
     pubKeyCredParams: [{type: "public-key", alg: -7}, {type: "public-key", alg: -257}],
-    authenticatorSelection: {residentKey: "preferred", userVerification: "preferred"},
+    authenticatorSelection: {residentKey: "preferred", userVerification: "required"},
     excludeCredentials: exclude.map(id => ({type: "public-key", id})), attestation: "none", timeout: 120000};
 }
-export const getOptions = (rpId, challenge, allow) => ({challenge, rpId, userVerification: "preferred",
+export const getOptions = (rpId, challenge, allow) => ({challenge, rpId, userVerification: "required",
   allowCredentials: allow.map(id => ({type: "public-key", id})), timeout: 120000});
 
 // a registration -> {id, jwk, alg, count} to store
@@ -85,6 +85,7 @@ export async function verifyCreate(r, {challenge, origin, rpId}) {
   const a = authData(att.get("authData"));
   if (!same(a.rpIdHash, await sha256(enc.encode(rpId)))) throw new Error("passkey: made for another site");
   if (!a.up) throw new Error("passkey: no user presence");
+  if (!a.uv) throw new Error("passkey: no Face ID, fingerprint or PIN");
   if (!a.credId || !a.key) throw new Error("passkey: no credential in the registration");
   if (b64u(a.credId) !== r.id) throw new Error("passkey: credential id mismatch");
   return {id: r.id, jwk: a.key.jwk, alg: a.key.alg, count: a.count};
@@ -106,6 +107,7 @@ export async function verifyGet(r, stored, {challenge, origin, rpId}) {
   const ad = unb64u(r.authenticatorData), a = authData(ad);
   if (!same(a.rpIdHash, await sha256(enc.encode(rpId)))) throw new Error("passkey: made for another site");
   if (!a.up) throw new Error("passkey: no user presence");
+  if (!a.uv) throw new Error("passkey: no Face ID, fingerprint or PIN");
   const signed = new Uint8Array(ad.length + 32);
   signed.set(ad); signed.set(await sha256(cd), ad.length);
   const es = stored.alg === -7;
