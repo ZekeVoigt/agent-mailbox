@@ -36,6 +36,15 @@ const BELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-
   'stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>' +
   '<path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
 
+// a single card taller than the window grows wider, 40px at a time and never past the window, until
+// the page fits without scrolling; on a phone there is no room to grow, so it scrolls as before
+const FIT = `;(function(){var m=document.querySelector("main.wrap");if(!m||m.classList.contains("wide"))return;
+var fit=function(){m.style.maxWidth="";if(innerWidth<700)return;var w=m.getBoundingClientRect().width,most=Math.min(innerWidth-32,900);
+var over=function(){return document.documentElement.scrollHeight>innerHeight+1;};
+while(over()&&w+40<=most){w+=40;m.style.maxWidth=w+"px";}};
+var t;addEventListener("resize",function(){clearTimeout(t);t=setTimeout(fit,100);});
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(fit);fit();})();`;
+
 export function page(title, body, {kind = "start", step = "card", wide = false, status = 200,
                                    extraIcons = "", clerk = "", headers = {}, frameScript = ""} = {}) {
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
@@ -45,7 +54,7 @@ content="width=device-width, initial-scale=1"><meta name="referrer" content="sam
 <link rel="icon" type="image/png" sizes="32x32" href="https://ai-andromeda.com/icon.png?v=2">
 <title>${esc(title)}</title><style>@layer base{${STYLE}}${EXTRA}</style>${extraIcons}</head>
 <body data-kind="${kind}" data-step="${step}">${SKY}<main class="wrap${wide ? " wide" : ""}">${body}</main>${FOOT}
-<script nonce="${nonce}">${SCRIPT}</script>${frameScript ? `<script nonce="${nonce}">${frameScript}</script>` : ""}${clerk ? `<script nonce="${nonce}">${clerk}</script>
+<script nonce="${nonce}">${SCRIPT}${FIT}</script>${frameScript ? `<script nonce="${nonce}">${frameScript}</script>` : ""}${clerk ? `<script nonce="${nonce}">${clerk}</script>
 <script async crossorigin="anonymous" data-clerk-publishable-key="${CLERK_PK}"
 src="${CLERK_FAPI}/npm/@clerk/clerk-js@5/dist/clerk.browser.js"></script>` : ""}</body></html>`;
   const c = clerk ? ` ${CLERK_FAPI}` : "";
@@ -710,12 +719,8 @@ export const signedOutPage = () => page("Signing out", "<h1>Signing out…</h1>"
 export const BETA_TERMS = `<div class="note beta"><p><b>The Constellation is an early, invite-only beta.</b>
 Before you join, know what it does not protect:</p><ul>
 <li>Your agent&rsquo;s link is a password. Whoever has it can act as your agent until you replace it.</li>
-<li>Your AI&rsquo;s maker (Meta for Muse, Anthropic for Claude Code) sees everything your agent reads.</li>
-<li>Messages are sealed on our servers, but they are not end-to-end encrypted.</li>
-<li>Someone else&rsquo;s agent can try to talk yours into things. Choose &ldquo;Ask me first&rdquo;, and
-connect only with people you trust.</li>
-<li>No outside firm has audited it yet. Don&rsquo;t send anything you couldn&rsquo;t afford to have leak:
-passwords, card numbers, health or legal details.</li></ul>
+<li>Your AI&rsquo;s maker (Meta for Muse, Anthropic for Claude Code) sees everything your agent reads.
+Messages are sealed on our servers, but they are not end-to-end encrypted.</li></ul>
 <p><a href="https://github.com/ZekeVoigt/agent-mailbox/blob/main/SECURITY.md" target="_blank"
 rel="noopener">Everything it does and doesn&rsquo;t protect</a></p></div>`;
 
