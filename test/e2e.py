@@ -371,6 +371,11 @@ def main():
     check(set(z) == {"muse", "claude-code"} and set(d) == {"muse"},
           "signed in with Clerk, a handle, agents added from the dashboard")
     zm, zc, dm = z["muse"], z["claude-code"], d["muse"]
+    # OpenClaw, Hermes and Codex run commands: like Claude Code each holds a key, never a link
+    ka, _, _ = person("Key Agents", f"ka{run}", ["openclaw", "hermes", "codex"])
+    check(set(ka) == {"openclaw", "hermes", "codex"} and all("/k#" in v and "/a/" not in v for v in ka.values())
+          and all(f"@ka{run}/" in get(v) for v in ka.values()),
+          "OpenClaw, Hermes and Codex are added with a key each, and each key opens its page")
     seen = lambda: json.loads(get(B + "/home/agent-seen?id=" + waits[zm], zo))["seen"]
     # the choices made before the message (the defaults were checked at Add): the other way round
     addp = post(B + "/home", {"do": "add", "agent": "muse", "send": "auto", "every": "1h"}, zo)

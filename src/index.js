@@ -17,7 +17,7 @@
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
 import {TILES, prefsOf, SEND, EVERY, OFFER, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
-  errorPage, invitePage, passkeyPage, device, PERMS, PERM_DEFAULT, permWords, closedPage, passPage} from "./ui.js";
+  errorPage, invitePage, passkeyPage, device, PERMS, PERM_DEFAULT, permWords, closedPage, passPage, isKey} from "./ui.js";
 import * as A2A from "./a2a.js";
 import {verifyClerk, clerkUser, revokeClerkSessions, configureClerk} from "./auth.js";
 import {newChallenge, createOptions, getOptions, verifyCreate, verifyGet, b64u} from "./passkey.js";
@@ -1779,7 +1779,7 @@ async function postHome(req, env, url) {
       while (names.has(n)) n = `${t}-${k++}`;
       names.add(n);
       made.push({id: crypto.randomUUID(), name: n, link: secret(), prefs: {send: f.send, every: f.every},
-        auth: t === "claude-code" ? "key" : "link"});
+        auth: isKey(t) ? "key" : "link"});
     }
     if (!made.length) return home(env, person, ses, "<p>Pick an agent to add.</p>", "add");
     // set each up before the directory knows it: a link never points at an agent with no self
@@ -1864,8 +1864,8 @@ async function postHome(req, env, url) {
     const rotated = await call(dir(env), "/rotate", {id: a.id, handle: person.handle, link: d});
     await delRef(env, rotated.old);
     await setRef(env, d, a.id);
-    // a Claude Code agent's replaced link becomes a key: never in an address again
-    const auth = a.name === "claude-code" || a.name.startsWith("claude-code-") ? "key" : undefined;
+    // a key agent's replaced link becomes a key: never in an address again
+    const auth = isKey(a.name) ? "key" : undefined;
     await call(stub, "/issue", {auth});
     await log(`Replaced ${a.name}'s ${auth ? "key" : "link"}`);
     const was = (await call(stub, "/status")).me || {};
