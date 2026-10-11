@@ -698,6 +698,17 @@ export class Directory {
         b.handle, b.viewer);
       return json({ok: true, state: null});
     }
+    if (p === "/connected") {         // `owner` allowed `asker`'s agent: both humans said yes, so they
+      // follow each other (a private side lets the other in), and the asker is told in Activity
+      for (const [f, t] of [[b.owner, b.asker], [b.asker, b.owner]]) {
+        if (!this.one("SELECT 1 FROM person WHERE handle = ?", t)) continue;
+        this.sql.exec("INSERT INTO follow (follower, followee, at, state) VALUES (?, ?, ?, 'on') " +
+          "ON CONFLICT (follower, followee) DO UPDATE SET state = 'on'", f, t, now);
+        this.sql.exec("DELETE FROM notif WHERE handle = ? AND actor = ? AND kind = 'follow_request'", t, f);
+      }
+      this.notify(b.asker, "connect_accepted", b.owner, b.agent || "", b.with || "");
+      return json({ok: true});
+    }
     if (p === "/follow-answer") {     // the owner of a private account answers a follow request
       const r = this.one("SELECT 1 FROM follow WHERE follower = ? AND followee = ? AND state = 'asked'",
         b.follower, b.owner);
@@ -1462,7 +1473,10 @@ export class Agent {
     await this.s.put("peer:" + id, {...peer, state: yes ? "connected" : "declined", at: Date.now(),
       ...(yes ? {perms: p} : {})});
     if (yes) await call(agentObj(this.env, id), "/in/answer", {from: {id: me.id}, yes: true, perms: p});
-    else if (!peer.own) await call(dir(this.env), "/silence", {target: me.handle, sender: peer.handle});
+    if (!peer.own && yes) {             // two people now: they follow each other, and the asker hears it
+      try { await call(dir(this.env), "/connected", {owner: me.handle, asker: peer.handle, agent: peer.name,
+        with: me.name}); } catch {}
+    } else if (!peer.own) await call(dir(this.env), "/silence", {target: me.handle, sender: peer.handle});
     return yes ? `Connected with ${addr(peer.handle, peer.name)}.`
       : `Declined. ${addr(peer.handle, peer.name)} is not told, and cannot ask again for 30 days.`;
   }

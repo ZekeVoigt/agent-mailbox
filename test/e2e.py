@@ -372,7 +372,7 @@ def main():
           "signed in with Clerk, a handle, agents added from the dashboard")
     zm, zc, dm = z["muse"], z["claude-code"], d["muse"]
     # OpenClaw, Hermes and Codex run commands: like Claude Code each holds a key, never a link
-    ka, _, _ = person("Key Agents", f"ka{run}", ["openclaw", "hermes", "codex"])
+    ka, kao, _ = person("Key Agents", f"ka{run}", ["openclaw", "hermes", "codex"])
     check(set(ka) == {"openclaw", "hermes", "codex"} and all("/k#" in v and "/a/" not in v for v in ka.values())
           and all(f"@ka{run}/" in get(v) for v in ka.values()),
           "OpenClaw, Hermes and Codex are added with a key each, and each key opens its page")
@@ -455,6 +455,11 @@ def main():
                      r'<input type="hidden" name="id" value="([^"]+)">', home)
     post(B + "/home", {"do": "accept", "agent": form.group(1), "id": form.group(2)}, zo)
     check("accepted your request" in get(dm), "Zeke allows it on his dashboard; Dad's Muse hears it")
+    told = [n for n in json.loads(get(B + "/home/notifs", do)) if n["kind"] == "connect_accepted"]
+    check(len(told) == 1 and told[0]["handle"] == f"zeke{run}" and told[0]["ref"] == "muse",
+          "and Dad is told in Activity that Zeke accepted his Muse's request")
+    bz = json.loads(get(B + f"/home/board/zeke{run}", do))
+    check(bz["you_follow"] and bz["follows_you"], "Zeke and Dad now follow each other")
     get(dm + "/say?" + U.urlencode({"to": f"@zeke{run}", "text": "Hi son, it works!"}))
     zagent = form.group(1)
     zp = get(zm)
@@ -530,6 +535,10 @@ def main():
     check(form is not None, "the request is on Sam's dashboard, for Sam to allow")
     post(B + "/home", {"do": "accept", "agent": form.group(1), "id": form.group(2)}, so)
     check("accepted your request" in get(zm), "Sam allows it; Zeke's Muse hears it")
+    check(any(n["kind"] == "connect_accepted" and n["handle"] == f"sam{run}"
+              for n in json.loads(get(B + "/home/notifs", zo))), "and Zeke is told in Activity")
+    bs = json.loads(get(B + f"/home/board/sam{run}", zo))
+    check(bs["you_follow"] and bs["follows_you"], "Zeke and Sam, connected through an invite, follow each other")
     get(zm + "/say?" + U.urlencode({"to": f"@sam{run}", "text": "Friday at 7?"}))
     check("Friday at 7?" in get(sm), "and the two agents talk")
     code, body = get_as(inv, UA["User-Agent"])
@@ -607,19 +616,20 @@ def main():
     check(refused(lambda: jpost(B + "/home/post", {"text": "x" * 501}, zo)), "a post over 500 characters is refused")
     check(jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o).get("ok"), "the stranger follows Zeke")
     bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
-    check(bz["followers"] == 1 and bz["you_follow"] and bz["status"] == "shipping the board"
+    check(bz["followers"] == 3 and bz["you_follow"] and bz["status"] == "shipping the board"
           and bz["posts"][0]["text"] == "first post" and {"muse", "claude-code"} <= set(bz["agents"])
-          and bz["link"] == "asked", "Zeke's board: status, post, agents, 1 follower, the request waiting")
+          and bz["link"] == "asked", "Zeke's board: status, post, agents, 3 followers (2 connections), the request waiting")
     feed = json.loads(get(B + "/home/feed", s2o))
     check(feed and feed[0]["text"] == "first post" and feed[0]["handle"] == f"zeke{run}", "it is in the follower's feed")
     fl = json.loads(get(B + f"/home/follows/zeke{run}?kind=followers", zo))
-    check([x["handle"] for x in fl] == [f"str{run}"], "Zeke sees who follows him")
+    check([x["handle"] for x in fl][0] == f"str{run}" and {x["handle"] for x in fl} ==
+          {f"str{run}", f"dad{run}", f"sam{run}"}, "Zeke sees who follows him")
     me = json.loads(get(B + f"/home/board/zeke{run}", zo))
-    check(me["self"] and me["follows_you"] is False and me["posts_n"] == 1, "Zeke's own board")
+    check(me["self"] and me["posts_n"] == 1, "Zeke's own board")
     jpost(B + "/home/post-delete", {"id": me["posts"][0]["id"]}, zo)
     jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": False}, s2o)
     bz = json.loads(get(B + f"/home/board/zeke{run}", s2o))
-    check(bz["posts_n"] == 0 and bz["followers"] == 0, "a post deleted, an unfollow")
+    check(bz["posts_n"] == 0 and bz["followers"] == 2, "a post deleted, an unfollow")
     jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, s2o)
     # likes and replies, and the notifications they make
     jpost(B + "/home/post", {"text": "second post"}, zo)
@@ -683,21 +693,21 @@ def main():
     # a private account: followers it approves see its posts
     jpost(B + "/home/privacy", {"private": True}, zo)
     check(json.loads(get(B + f"/home/board/zeke{run}", s2o))["can_see"], "a follower from before still sees a private account")
-    jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, do)
-    bd = json.loads(get(B + f"/home/board/zeke{run}", do))
+    jpost(B + "/home/follow", {"handle": f"zeke{run}", "on": True}, kao)
+    bd = json.loads(get(B + f"/home/board/zeke{run}", kao))
     check(bd["private"] and bd["follow_state"] == "asked" and not bd["can_see"] and bd["posts"] == []
-          and refused(lambda: get(B + f"/home/follows/zeke{run}?kind=followers", do))
-          and refused(lambda: jpost(B + "/home/like", {"post": pid, "on": True}, do)),
+          and refused(lambda: get(B + f"/home/follows/zeke{run}?kind=followers", kao))
+          and refused(lambda: jpost(B + "/home/like", {"post": pid, "on": True}, kao)),
           "a new follower of a private account waits: no posts, lists or likes")
     check(json.loads(get(B + f"/home/board/zeke{run}", zo))["requests"] == 1
-          and [x["handle"] for x in json.loads(get(B + f"/home/follows/zeke{run}?kind=requests", zo))] == [f"dad{run}"]
+          and [x["handle"] for x in json.loads(get(B + f"/home/follows/zeke{run}?kind=requests", zo))] == [f"ka{run}"]
           and "follow_request" in [n["kind"] for n in json.loads(get(B + "/home/notifs", zo))],
           "Zeke sees the follow request, in Activity too")
-    jpost(B + "/home/follow-answer", {"handle": f"dad{run}", "yes": True}, zo)
-    bd = json.loads(get(B + f"/home/board/zeke{run}", do))
+    jpost(B + "/home/follow-answer", {"handle": f"ka{run}", "yes": True}, zo)
+    bd = json.loads(get(B + f"/home/board/zeke{run}", kao))
     check(bd["can_see"] and bd["posts"][0]["text"] == "second post"
-          and "follow_accepted" in [n["kind"] for n in json.loads(get(B + "/home/notifs", do))],
-          "approved: Dad sees the posts and is told")
+          and "follow_accepted" in [n["kind"] for n in json.loads(get(B + "/home/notifs", kao))],
+          "approved: they see the posts and are told")
     jpost(B + "/home/privacy", {"private": False}, zo)
     # prompt injection: a stranger's name and reason never reach Zeke's agent; a contact's message
     # can never pass for the page, whatever lines and invisible characters it carries

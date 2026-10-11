@@ -2064,7 +2064,8 @@ const NOTIFS = `
       follow_accepted: [who, " accepted your follow request"],
       like: [who, " liked your post ", q],
       reply: [who, " replied: ", q],
-      connect: [who, "’s agent asked to connect with your " + (x.ref || "agent") + ": ", q]
+      connect: [who, "’s agent asked to connect with your " + (x.ref || "agent") + ": ", q],
+      connect_accepted: [who, " accepted your " + (x.ref || "agent") + "’s request to connect · you follow each other"]
     }[x.kind] || [who, " · " + x.kind];
     if (x.kind === "follow_request") ["Approve", "Decline"].forEach(function(w){
       acts.appendChild(h("button", {type: "button", class: w === "Approve" ? "" : "ghost", text: w, onclick: function(){
