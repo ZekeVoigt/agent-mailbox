@@ -6,7 +6,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
-  "routes": [{ "pattern": "agents.ai-andromeda.com", "custom_domain": true }],
+  // agents.ai-andromeda.com is served by the sealed Vault (vault/), not this Worker: no route here
+  "routes": [],
   // Workers Logs keep only what the code logs (errors, redacted paths, admin ops): no invocation
   // logs, since a request's URL can carry an agent's secret link and its message text
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } },

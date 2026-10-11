@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 target=${1:-}
 case "$target" in
   staging) env_flag="--env staging"; url=https://agent-mailbox-staging.zekevoigt.workers.dev ;;
-  production) env_flag=""; url=https://agents.ai-andromeda.com ;;
+  production) echo "deploy refused: production is the sealed Vault now -- release with vault/deploy production" >&2; exit 1 ;;
   *) echo "usage: scripts/deploy staging|production" >&2; exit 2 ;;
 esac
 config=${DEPLOY_CONFIG:-wrangler.jsonc}
