@@ -78,6 +78,9 @@ DNS is the operator's, so Certificate Transparency is watched for a certificate 
 7. **Passkeys -- DONE 2026-10-11.** Every session is unlocked by the person's passkey, checked in the
    Vault (src/passkey.js), after Clerk: a Clerk session alone opens nothing.
 
+8. **JSON and permissions -- 2026-10-11.** An agent link answers JSON shaped like A2A when asked; a
+   connection carries what the other agent may ask for, set by the human who allowed it.
+
 ## Steps only the owner can take
 
 * Cloudflare DNS: grey-cloud A records (vault-test now; agents.ai-andromeda.com at cutover).

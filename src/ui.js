@@ -80,6 +80,13 @@ button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#73
 .tiles .t-note{display:block;font-size:12px;color:var(--dim,#737373)}
 .rows .row .why{white-space:normal;overflow-wrap:anywhere}
 .row.req{flex-wrap:wrap}
+.perms{flex-basis:100%;margin:6px 0 0 34px}.perms p{margin:0 0 4px;font-size:13px;color:var(--mute)}
+.perms .pm{display:block;margin:3px 0;font-size:13.5px}.perms .pm small{color:var(--mute);margin-left:4px}
+.perms .pm input{width:auto;margin:0 6px 0 0;vertical-align:-1px}
+.perms .pmnote{display:block;width:100%;max-width:420px;margin:6px 0;font-size:13px}
+.perms button,.row form.perms button{width:auto;margin:4px 0 0;padding:7px 16px;font-size:13px;opacity:1;color:var(--ink);background:#333}
+.ncard .perms label.pm{display:block;color:var(--ink);font-size:13px}.ncard .perms label.pm small{display:inline}
+.via .perms{margin:6px 0 0}.via .perms summary{cursor:pointer;font-size:12.5px;color:var(--mute)}
 .row .acts{display:flex;gap:6px;flex:none;margin-left:auto}
 .row .acts form button{opacity:1;padding:7px 16px;font-size:13px;color:var(--ink);background:#262626}
 .row .acts form:first-child button{color:var(--ink);background:#333}
@@ -750,6 +757,25 @@ export const EVERY = {
 // what Add offers, evenly spread from fast to slow (each about 3 to 6 times the last), and what we
 // recommend: asking first, and a check every minute or five
 export const OFFER = ["1m", "5m", "15m", "1h", "4h", "1d"];
+// what a connection's other agent may ask yours for: set when the human allows it, changed on
+// Connections. Messages are always allowed; spending, even when ticked, comes to the human first.
+export const PERMS = [["info", "Questions & info", "facts, opinions, general help"],
+  ["plans", "Plans & scheduling", "propose times, book meetings"],
+  ["quotes", "Quotes & prices", "ask for or give a price"],
+  ["spend", "Spend or commit", "buy, pay, sign, agree to terms; your agent still asks you first"]];
+export const PERM_DEFAULT = {info: true, plans: false, quotes: false, spend: false, note: ""};
+export const permWords = p => {
+  p = {...PERM_DEFAULT, ...(p || {})};
+  return ["messages", ...PERMS.filter(([k]) => p[k]).map(([, t]) => t.toLowerCase())].join(", ");
+};
+function permFields(p) {
+  p = {...PERM_DEFAULT, ...(p || {})};
+  return `<label class="pm"><input type="checkbox" checked disabled> Messages <small>always</small></label>` +
+    PERMS.map(([k, t, d]) => `<label class="pm"><input type="checkbox" name="${k}" value="1"${p[k] ? " checked" : ""}> ` +
+      `${esc(t)} <small>${esc(d)}</small></label>`).join("") +
+    `<input class="pmnote" name="note" maxlength="200" value="${esc(p.note || "")}" ` +
+    `placeholder="A note for your agent about them (optional)" autocomplete="off">`;
+}
 export const RECOMMENDED = new Set(["ask", "1m", "5m"]);
 export const prefsOf = p => ({send: SEND[p && p.send] ? p.send : "ask", every: EVERY[p && p.every] ? p.every : "5m"});
 export const prefsLine = p => { p = prefsOf(p);
@@ -952,9 +978,13 @@ function graph(person, agents, profiles) {
           x.at ? " · since " + day(x.at) : ""}</small></span></button>`);
       const cut = x.state === "connected" ? `<form method="post" action="/home">${
         hidden({do: "cut", agent: a.id, to: `@${x.handle}/${x.name}`})}<button>Cut</button></form>` : "";
+      const pm = x.state === "connected" ? `<details class="perms"><summary>What their agent may ask for: ${
+        esc(permWords(x.perms))}</summary><form method="post" action="/home">${
+        hidden({do: "perms", agent: a.id, to: `@${x.handle}/${x.name}`})}${permFields(x.perms)}<button>Save</button>` +
+        `</form></details>` : "";
       rows.push(`<div class="via"><p>${why}</p><small><span class="dot ${cls}"></span>${
         x.state === "connected" ? "connected" : "waiting for them"} · your ${esc(a.name)} to their ${
-        esc(x.name)}${x.at ? " · since " + day(x.at) : ""}</small>${cut}</div>`);
+        esc(x.name)}${x.at ? " · since " + day(x.at) : ""}</small>${pm}${cut}</div>`);
     }
     cards.push(`<aside class="ncard" id="p${j}" hidden>${close}<div class="bd" data-board="${esc(h)}">` +
       `</div><h3>Connected through</h3>${rows.join("")}</aside>`);
@@ -1000,8 +1030,9 @@ export function homePage({person, agents, note = "", start = null, sessions = []
   const requests = asked.length ? asked.map(([a, x]) => `<div class="row req">${logo(x.name)}
 <span class="why"><strong>${esc(x.person)}</strong> <small>@${esc(x.handle)}/${esc(x.name)}</small><br>wants
 to connect with your ${esc(shownName(a.name))}, about “${esc(x.why)}”<br><small>${ago(now - x.at)}</small></span>
-<span class="acts">${act({do: "accept", agent: a.id, id: x.id}, "Allow")}${
-  act({do: "decline", agent: a.id, id: x.id}, "Decline", true)}</span></div>`).join("")
+<span class="acts">${act({do: "decline", agent: a.id, id: x.id}, "Decline", true)}</span>
+<form class="perms" method="post" action="${self}">${hidden({do: "accept", agent: a.id, id: x.id})}
+<p>Their agent may ask yours for:</p>${permFields()}<button>Allow</button></form></div>`).join("")
     : "";
 
 
