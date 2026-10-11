@@ -9,7 +9,7 @@
     "LOCK_MODE": "pause",
     "INVITE_ONLY": "1",
     "LINK_UNUSED_TTL_S": "86400",
-    "AGENTS_OFFERED": "muse",
+    "AGENTS_OFFERED": "muse,openclaw,hermes,codex",
     "LINKS_MIGRATED": "1",
     "CLERK_FAPI": "https://clerk.ai-andromeda.com",
     "CLERK_PK": "pk_live_Y2xlcmsuYWktYW5kcm9tZWRhLmNvbSQ"
