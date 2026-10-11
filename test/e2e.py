@@ -838,12 +838,15 @@ def main():
     def raw(req):
         try: r = R.urlopen(req); return r.status, r.headers
         except urllib.error.HTTPError as e: return e.code, e.headers
+        except (ConnectionError, urllib.error.URLError) as e:   # refused before it was all sent
+            if isinstance(e, ConnectionError) or isinstance(e.reason, ConnectionError): return "closed", {}
+            raise
     _, hd = raw(R.Request(B + "/attestation"))
     check(hd.get("strict-transport-security") and hd.get("x-content-type-options") == "nosniff"
           and hd.get("x-frame-options") == "DENY", "keeper's /attestation carries HSTS, nosniff and DENY")
     big, _ = raw(R.Request(B + "/session", b"x" * (3 << 20), {"content-type": "application/json",
                  "origin": B}, method="POST"))
-    check(big == 413, f"a 3 MB body outside an upload is refused ({big})")
+    check(big in (413, "closed"), f"a 3 MB body outside an upload is refused ({big})")
     # per IP at the edge: wrong secrets, then everything (a minute's wait after each, for the clean-up)
     if TEST_SITE:
         # Cloudflare's counters are eventually consistent: the limit engages within a burst, not at
