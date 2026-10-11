@@ -102,7 +102,8 @@ Keep this file true: a change that alters any statement here updates it in the s
 
 - Set `ADMIN_OWNER` for production in Secret Manager, in the owner's own terminal, and rotate
   `ADMIN`, which has lived in session scratchpads.
-- MFA available, and enforced for staff, on the production Clerk instance.
+- Two-step sign-in on every staff account that controls the service (Google Cloud, GitHub, Cloudflare,
+  Clerk's dashboard). People's own sign-in needs no Clerk MFA: the passkey after Clerk is the second factor.
 - A disclosure policy (security.txt is live; security@ai-andromeda.com forwards to the owner by
   Cloudflare Email Routing).
 - An outside penetration test (the brief, scope and our own first pass: vault/PENTEST.md); then SOC 2 readiness (policies, access reviews, vendor list:
