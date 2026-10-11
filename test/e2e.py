@@ -305,14 +305,14 @@ def main():
           "a real Clerk token minted for another site (azp) is refused")
     ok = exchange(browser_token(uname, B))
     first = get(B + "/home", ok) if not isinstance(ok, int) else ""
-    check("Protect your account with a passkey" in first and refused(lambda: get(B + "/home/notif-count", ok)),
+    check("Secure your account" in first and refused(lambda: get(B + "/home/notif-count", ok)),
           "the same person's token minted on this site signs in -- and opens nothing until a passkey is made")
     unlock(ok, au["id"])
     check(len(recovery[au["id"]]) == 8 and "Welcome" in get(B + "/home", ok),
           "a passkey made: the dashboard opens, and 8 recovery codes are shown once")
     # passkeys: Clerk alone, in another browser, opens nothing; only this person's passkey unlocks it
     other = session(au["id"], passkey=False)
-    check("Unlock with your passkey" in get(B + "/home", other) and refused(lambda: get(B + "/home/notif-count", other)),
+    check("Welcome back" in get(B + "/home", other) and refused(lambda: get(B + "/home/notif-count", other)),
           "a second Clerk sign-in (even one minted with Clerk's secret key) sees only the unlock page")
     o = jsend(other, "/passkey/options", {"mode": "get"})
     stolen = Passkey().get(o["challenge"], cred_id=_b64u(passkeys[au["id"]].id))

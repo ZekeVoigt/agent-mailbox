@@ -1657,8 +1657,7 @@ async function postHome(req, env, url) {
     const codes = recoveryCodes();
     await call(dir(env), "/pk-codes", {clerk: ses.clerk, codes: await Promise.all(codes.map(c => digest(c)))});
     await log("Made new recovery codes");
-    return home(env, person, ses, "Your new recovery codes (the old ones no longer work) -- save them now, " +
-      "they are shown only once: " + codes.join("  "));
+    return passkeyPage("codes", "", codes);   // the old codes stop working now
   }
   if (f.do === "end-all") {
     await call(dir(env), "/session-end-all", {clerk: ses.clerk});
@@ -2237,8 +2236,8 @@ async function route(req, env) {
     if (url.pathname.startsWith("/passkey/")) {
       if (!ses) return url.pathname === "/passkey/add" ? Response.redirect(`${url.origin}/`, 303) : json({error: "Sign in again."}, 401);
       if (url.pathname === "/passkey/add" && req.method === "GET")
-        return ses.pk ? passkeyPage("add", q.recovered ? "You're in with a recovery code. Add a passkey on this " +
-          "device now, so you don't need another." : "") : passkeyPage(ses.has ? "unlock" : "setup");
+        return ses.pk ? passkeyPage("add", q.recovered ? "You signed in with a recovery code. Register a passkey " +
+          "on this device to keep access." : "") : passkeyPage(ses.has ? "unlock" : "setup");
       if (req.method === "POST") return passkeyRoute(req, env, url, ses);
       return text("Unknown address.", 404);
     }

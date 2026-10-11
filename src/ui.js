@@ -1007,13 +1007,12 @@ class="why">${esc(device(x.ua))}${x.sid === current ? " <small>· this browser</
     x.sid === current ? "" : act({do: "end-session", sid: x.sid}, "Sign out", true)}</div>`).join("")}</div>
 <div class="signout-here"><form method="post" action="/signout"><button class="ghost">Sign out</button></form></div>
 ${act({do: "end-all"}, "Sign out everywhere", true)}`;
-  const passkeys = `<h2>Passkeys</h2><p class="low">Your passkeys unlock this account after you sign in. They are
-checked inside the sealed Constellation, so no one else -- not even the people who run it -- can open your
-account. ${codes} recovery code${codes === 1 ? "" : "s"} left.</p><div class="rows">${keys.map(k => `<div class="row"><span
-class="why">${esc(k.name)}<br><small>added ${when(k.at)} · last used ${ago(now - (k.used || k.at))}</small></span>${
-    keys.length > 1 ? act({do: "pk-remove", key: k.id}, "Remove", true) : ""}</div>`).join("")}</div>
+  const passkeys = `<h2>Passkeys</h2><p class="low">A passkey is required to access your account. Passkeys are
+verified inside the Constellation&rsquo;s sealed environment. ${codes} recovery code${codes === 1 ? "" : "s"} remaining.</p>
+<div class="rows">${keys.map(k => `<div class="row"><span class="why">${esc(k.name)}<br><small>Added ${when(k.at)} &middot; last used ${
+    ago(now - (k.used || k.at))}</small></span>${keys.length > 1 ? act({do: "pk-remove", key: k.id}, "Remove", true) : ""}</div>`).join("")}</div>
 <p><a class="btn ghost" href="/passkey/add">Add a passkey on this device</a></p>
-${act({do: "pk-codes"}, "Make new recovery codes", true)}`;
+${act({do: "pk-codes"}, "Generate new recovery codes", true)}`;
   const activity = `<h2>Security activity</h2><div class="rows">${log.length ? log.map(x =>
     `<div class="row"><span class="why">${esc(x.what)}<br><small>${when(x.at)} · ${esc(x.ip || "")} · ${
     esc(device(x.ua))}</small></span></div>`).join("") : "<p>Nothing yet.</p>"}</div>`;
@@ -2022,6 +2021,32 @@ const PASSKEY = `(function () {
     if (!r.ok) throw new Error(o.error || "That didn't work: try again.");
     return o;
   };
+  var showCodes = function (codes) {
+    var box = document.getElementById("codes"), grid = box.querySelector(".codes");
+    var shown = codes.map(function (c) { return c.slice(0, 5) + "-" + c.slice(5); });
+    grid.textContent = "";
+    shown.forEach(function (c) { var s = document.createElement("span"); s.textContent = c; grid.appendChild(s); });
+    var copy = document.getElementById("copy"), dl = document.getElementById("dl"), ack = document.getElementById("ack"),
+      done = document.getElementById("done");
+    var label = function (b, words) { b.querySelector("span").textContent = words;
+      setTimeout(function () { b.querySelector("span").textContent = b === copy ? "Copy" : "Download"; }, 2000); };
+    copy.onclick = async function () {
+      try { await navigator.clipboard.writeText(shown.join("\\n")); label(copy, "Copied"); }
+      catch (e) { label(copy, "Copy failed"); }
+    };
+    dl.onclick = function () {
+      var text = "The Constellation recovery codes\\n" + location.host + "\\nEach code works once.\\n\\n" + shown.join("\\n") + "\\n";
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], {type: "text/plain"}));
+      a.download = "constellation-recovery-codes.txt"; document.body.appendChild(a); a.click(); a.remove();
+      label(dl, "Downloaded");
+    };
+    ack.onchange = function () { done.disabled = !ack.checked; };
+    done.onclick = function () { location.href = "/home"; };
+    box.hidden = false;
+  };
+  var given = document.querySelector(".codes[data-codes]");
+  if (given) showCodes(given.getAttribute("data-codes").split(" "));
   var make = document.getElementById("make"), use = document.getElementById("use"), rec = document.getElementById("rec");
   if (!window.PublicKeyCredential) say("This browser can't use passkeys. Try Safari, Chrome or Edge, or your phone.");
   if (make) make.onclick = async function () {
@@ -2033,12 +2058,8 @@ const PASSKEY = `(function () {
       var c = await navigator.credentials.create({publicKey: o});
       var got = await post("/passkey/create", {id: c.id, clientDataJSON: b64u(c.response.clientDataJSON),
         attestationObject: b64u(c.response.attestationObject)});
-      if (got.codes) {
-        document.getElementById("first").hidden = true;
-        var box = document.getElementById("codes");
-        box.querySelector("pre").textContent = got.codes.join("\\n");
-        box.hidden = false;
-      } else location.href = "/home";
+      if (got.codes) { document.getElementById("first").hidden = true; showCodes(got.codes); }
+      else location.href = "/home";
     } catch (e) { say(e.name === "NotAllowedError" ? "No passkey was made." : e.message); make.disabled = false; }
   };
   if (use) use.onclick = async function () {
@@ -2060,25 +2081,72 @@ const PASSKEY = `(function () {
   };
 })();`;
 
-export function passkeyPage(mode, note = "") {
-  const out = `<form method="post" action="/signout"><button class="ghost">Sign out</button></form>`;
-  const codes = `<div id="codes" hidden><h1>Save your recovery codes</h1><p>Each opens your account once if you lose
-every passkey. Keep them somewhere safe, like a password manager: they are shown only now, and no one -- not
-even the people who run this site -- can recover your account without them.</p><pre class="mem"></pre>
-<p><a class="btn" href="/home">I've saved them</a></p></div>`;
-  const body = mode === "unlock" ? `<div class="j invited"><h1>Unlock with your passkey</h1>
-<p>Your account is protected by a passkey: Face ID, Touch ID, or your device's lock.</p>
-<p><button id="use">Use my passkey</button></p><p id="said" class="err" hidden></p>
-<details><summary>Lost your passkey?</summary><form id="rec"><p><label>A recovery code<input name="code"
-autocomplete="one-time-code" required></label></p><button class="ghost">Unlock with the code</button></form></details>${out}</div>`
-    : mode === "add" ? `<div class="j invited"><div id="first"><h1>Add a passkey</h1>${note ? `<p class="low">${esc(note)}</p>` : ""}
-<p>Add a passkey on this device, so it can unlock your account too.</p>
-<p><button id="make">Add a passkey</button></p><p id="said" class="err" hidden></p>
-<p><a href="/home">Not now</a></p></div>${codes}</div>`
-    : `<div class="j invited"><div id="first"><h1>Protect your account with a passkey</h1>
-<p>From now on, signing in also takes a passkey -- Face ID, Touch ID, or your device's lock. It is checked
-inside the sealed Constellation, so no one else, not even the people who run this site, can open your
-account, read your conversations or answer for you.</p>
-<p><button id="make">Create my passkey</button></p><p id="said" class="err" hidden></p>${out}</div>${codes}</div>`;
-  return page(mode === "unlock" ? "Unlock" : "Passkey", body, {kind: "join", frameScript: PASSKEY});
+const PK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
+<path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/>
+<path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/>
+<path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></svg>`;
+const PK_STYLE = `<style>
+.pk{text-align:center}
+.pk .mark{display:grid;place-items:center;width:60px;height:60px;margin:2px auto 16px;border-radius:50%;
+  background:radial-gradient(circle at 50% 30%,#2b2b2b,#141414);border:1px solid var(--line2,#333);color:var(--ink,#fafafa)}
+.pk .mark svg{width:28px;height:28px}
+.pk h1{margin:0 0 8px}
+.pk .tag{color:var(--mute,#a3a3a3);margin:0 auto 20px;max-width:28em;font-size:14.5px;line-height:1.5}
+.pk .codes{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:0 0 12px;padding:14px;border:1px solid var(--line,#262626);
+  border-radius:14px;background:#0d0d0d}
+.pk .codes span{padding:10px 0;border-radius:9px;background:#161616;font:14.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.06em;color:var(--ink,#fafafa);user-select:all}
+.pk .pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 16px}
+.pk .pair button{margin:0;background:#1c1c1c;border:1px solid var(--line2,#333);color:var(--soft,#d4d4d4);font-size:13.5px;gap:8px}
+.pk .pair button:hover{background:#242424;color:var(--ink,#fafafa)}
+.pk .pair svg{width:15px;height:15px}
+.pk label.ack{display:flex;gap:10px;align-items:flex-start;text-align:left;font-size:13.5px;color:var(--soft,#d4d4d4);margin:0 0 4px;cursor:pointer}
+.pk label.ack input{margin:3px 0 0;accent-color:#fafafa}
+.pk button:disabled{opacity:.4;cursor:not-allowed}
+.pk details{margin:16px 0 0;text-align:left}
+.pk details summary{text-align:center}
+.pk details input{width:100%;margin:6px 0 0}
+.pk .foot{display:flex;justify-content:center;align-items:center;gap:6px;margin:18px 0 0}
+.pk .foot form{margin:0}
+.pk .foot a,.pk .foot .linkish{color:var(--dim,#737373)}
+.pk .note{margin:16px 0 0;font-size:12.5px;color:var(--dim,#737373);line-height:1.5}
+</style>`;
+const COPY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const DOWN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>`;
+
+// the recovery codes: shown once, when the first passkey is made (the script fills them) or when new
+// ones are generated in Settings (the server passes them)
+const codesView = (codes = [], hidden = true) => `<div id="codes" class="j invited pk"${hidden ? " hidden" : ""}>${PK_STYLE}
+<div class="mark">${PK_ICON}</div><h1>Save your recovery codes</h1>
+<p class="tag">Use one of these codes to access your account if you lose your passkeys. Each code works once.</p>
+<div class="codes"${codes.length ? ` data-codes="${esc(codes.join(" "))}"` : ""}></div>
+<div class="pair"><button id="copy" type="button">${COPY_ICON}<span>Copy</span></button><button id="dl"
+type="button">${DOWN_ICON}<span>Download</span></button></div>
+<label class="ack"><input type="checkbox" id="ack"><span>I&rsquo;ve stored these codes in a safe place, such as a
+password manager.</span></label>
+<button id="done" type="button" disabled>Continue</button>
+<p class="note">These codes won&rsquo;t be shown again. Without a passkey or a recovery code, your account can&rsquo;t be
+recovered &mdash; not even by our team.</p></div>`;
+
+export function passkeyPage(mode, note = "", codes = []) {
+  const out = `<form method="post" action="/signout"><button class="linkish">Sign out</button></form>`;
+  const card = (head, tag, inner, foot) => `<div class="j invited pk">${PK_STYLE}<div class="mark">${PK_ICON}</div>
+<h1>${head}</h1><p class="tag">${tag}</p>${inner}<p id="said" class="err" hidden></p><div class="foot">${foot}</div></div>`;
+  if (mode === "codes") return page("Recovery codes", codesView(codes, false), {kind: "join", frameScript: PASSKEY});
+  const body = mode === "unlock" ? card("Welcome back", "Verify it&rsquo;s you with your passkey to continue.",
+      `<button id="use">Continue with passkey</button>
+<details><summary>Use a recovery code instead</summary><form id="rec"><input name="code"
+autocomplete="one-time-code" placeholder="xxxxx-xxxxx" required aria-label="Recovery code"><p><button>Verify code</button></p></form></details>`,
+      out)
+    : mode === "add" ? `<div id="first">${card("Add a passkey", note ? esc(note) : "Register this device to sign in to your account.",
+      `<button id="make">Add passkey</button>`, `<a href="/home">Not now</a>`)}</div>${codesView()}`
+    : `<div id="first">${card("Secure your account", "Set up a passkey to sign in with Face ID, Touch ID or your device&rsquo;s PIN.",
+      `<button id="make">Set up passkey</button>
+<p class="note">Passkeys are verified inside the Constellation&rsquo;s sealed environment. No one else &mdash;
+including our team &mdash; can access your account, your conversations or your agents.</p>`,
+      `<span>Takes about 10 seconds</span><span>&middot;</span>${out}`)}</div>${codesView()}`;
+  return page(mode === "unlock" ? "Verify it's you" : "Passkey", body, {kind: "join", frameScript: PASSKEY});
 }
