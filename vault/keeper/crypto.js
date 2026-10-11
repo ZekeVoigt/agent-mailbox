@@ -7,6 +7,9 @@ export function derive(dataKey, purpose) {
   return Buffer.from(hkdfSync("sha256", dataKey, Buffer.alloc(0), Buffer.from("constellation-vault/" + purpose), 32));
 }
 
+// every GCM tag is 16 bytes, and a decipher accepts no other length
+export const TAG = 16;
+
 // -- small values (a snapshot's file, its manifest): nonce(12) | ciphertext | tag(16), with AAD
 export function seal(key, plain, aad) {
   const nonce = randomBytes(12), c = createCipheriv("aes-256-gcm", key, nonce);
@@ -15,7 +18,7 @@ export function seal(key, plain, aad) {
 }
 export function open(key, box, aad) {
   if (box.length < 28) throw new Error("sealed value too short");
-  const d = createDecipheriv("aes-256-gcm", key, box.subarray(0, 12));
+  const d = createDecipheriv("aes-256-gcm", key, box.subarray(0, 12), {authTagLength: TAG});
   d.setAAD(Buffer.from(aad));
   d.setAuthTag(box.subarray(box.length - 16));
   return Buffer.concat([d.update(box.subarray(12, box.length - 16)), d.final()]);
@@ -28,7 +31,7 @@ export const sameMac = (a, b) => a.length === b.length && timingSafeEqual(a, b);
 //   chunk i (CHUNK plaintext bytes, the last shorter): AES-GCM, nonce = prefix | u32(i),
 //   AAD = the header's first 20 bytes | u32(i) -- so changing the size, swapping, reordering or
 //   moving a chunk from another file fails to decrypt.
-export const CHUNK = 64 * 1024, TAG = 16, MAGIC = Buffer.from("CVB1");
+export const CHUNK = 64 * 1024, MAGIC = Buffer.from("CVB1");
 
 export function headerFor(key, prefix, size, meta) {
   const fixed = Buffer.alloc(20);
@@ -49,12 +52,12 @@ export function readHeader(key, buf) {           // -> {fixed, prefix, size, met
 const chunkNonce = (prefix, i) => { const n = Buffer.alloc(12); prefix.copy(n, 0); n.writeUInt32BE(i, 8); return n; };
 const chunkAad = (fixed, i) => { const a = Buffer.alloc(24); fixed.copy(a, 0); a.writeUInt32BE(i, 20); return a; };
 export function sealChunk(key, fixed, i, plain) {
-  const c = createCipheriv("aes-256-gcm", key, chunkNonce(fixed.subarray(4, 12), i));
+  const c = createCipheriv("aes-256-gcm", key, chunkNonce(fixed.subarray(4, 12), i), {authTagLength: TAG});
   c.setAAD(chunkAad(fixed, i));
   return Buffer.concat([c.update(plain), c.final(), c.getAuthTag()]);
 }
 export function openChunk(key, fixed, i, box) {
-  const d = createDecipheriv("aes-256-gcm", key, chunkNonce(fixed.subarray(4, 12), i));
+  const d = createDecipheriv("aes-256-gcm", key, chunkNonce(fixed.subarray(4, 12), i), {authTagLength: TAG});
   d.setAAD(chunkAad(fixed, i));
   d.setAuthTag(box.subarray(box.length - TAG));
   return Buffer.concat([d.update(box.subarray(0, box.length - TAG)), d.final()]);

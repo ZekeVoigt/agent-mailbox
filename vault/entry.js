@@ -14,6 +14,8 @@ function limiter(name, limit, period) {
     async limit({key}) {
       const now = Date.now(), w = hits.get(key);
       if (!w || now - w[0] >= period * 1000) {
+        // windows that have run out go first; only a flood of fresh addresses empties the map
+        if (hits.size > 50000) for (const [k, x] of hits) if (now - x[0] >= period * 1000) hits.delete(k);
         if (hits.size > 50000) hits.clear();
         hits.set(key, [now, 1]);
         return {success: true};

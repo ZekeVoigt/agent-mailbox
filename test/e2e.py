@@ -13,6 +13,8 @@ import urllib.error, urllib.parse as U, urllib.request as R
 B = sys.argv[1].rstrip("/")
 # a test deployment (staging, or E2E_TEST_SITE=1 for a private one): links are enforced, notices safe
 TEST_SITE = "staging" in B or os.environ.get("E2E_TEST_SITE") == "1"
+# the beta: new accounts need an invite or the owner's pass (INVITE_ONLY=1); e2e accounts never do
+INVITE_ONLY = os.environ.get("E2E_INVITE_ONLY", "1") == "1"
 KEY = os.environ["CLERK_SECRET_KEY"]
 UA = {"User-Agent": "Mozilla/5.0 (constellation e2e)"}
 made_users = []
@@ -233,7 +235,7 @@ def person(name, handle, agents, invite=None):
         get(invite, op)
     first = get(B + "/home", op)
     assert "Welcome" in first, re.findall(r"<title>[^<]*|<h1>[^<]*", first)
-    post(B + "/home", {"do": "onboard", "name": name, "handle": handle}, op)
+    post(B + "/home", {"do": "onboard", "name": name, "handle": handle, "understood": "1"}, op)
     handle_of[u["id"]] = handle
     refused_add = post(B + "/home", {"do": "add", "agent": agents}, op)
     assert "Nothing was added" in refused_add and "data-wait=" not in refused_add, \
@@ -281,11 +283,16 @@ def get_as(url, ua):
         return e.code, e.read().decode()
 
 
-def plain_join(handle):
-    """A person signing up as anyone would (no e2e mark): the page after picking a handle."""
+def plain_join(handle, way=None, understood=True):
+    """A person signing up as anyone would (no e2e mark), through `way` (an invite or pass link) if
+    given: the page after picking a handle."""
     u, _ = clerk_user(handle.replace("-", "_"), test=False)
     op = session(u["id"])
-    out = post(B + "/home", {"do": "onboard", "name": "Plain Person", "handle": handle}, op)
+    if way:
+        try: get(way, op)
+        except R.HTTPError: pass      # a used invite or pass: 410, and no cookie
+    out = post(B + "/home", {"do": "onboard", "name": "Plain Person", "handle": handle,
+                             **({"understood": "1"} if understood else {})}, op)
     handle_of[u["id"]] = handle
     return out
 
@@ -794,9 +801,40 @@ def main():
     if TEST_SITE and os.environ.get("ADMIN"):
         admin("reset-signups", {})
         most = int(os.environ.get("E2E_SIGNUPS_PER_IP", "5"))
-        outs = [plain_join(f"ip{run}x{i}") for i in range(most + 1)]
+        ways = (admin("passes", {"n": most + 1}, os.environ["ADMIN_OWNER"])["passes"] if INVITE_ONLY
+                else [None] * (most + 1))
+        outs = [plain_join(f"ip{run}x{i}", ways[i]) for i in range(most + 1)]
         check(all("Welcome" not in o and "Too many" not in o for o in outs[:most]) and "Too many new accounts" in outs[most],
               f"{most} new accounts from one network a day, then refused")
+    # the beta's door: what it doesn't protect is said, and ticked, before any account is made; a
+    # name that would pass for the Constellation is never given; with INVITE_ONLY a new person needs
+    # an unused invite or the owner's pass, and each lets one person in
+    if TEST_SITE and os.environ.get("ADMIN"):
+        admin("reset-signups", {})
+        out = plain_join(f"nu{run}", understood=False)
+        check("Tick that you understand" in out and "not end-to-end encrypted" in html.unescape(out),
+              "no account until the person ticks that they understand what the beta does not protect")
+        check("is taken" in post(B + "/home", {"do": "onboard", "name": "X", "handle": "support", "understood": "1"},
+                                 session(clerk_user(f"rs{run}")[0]["id"])),
+              "a handle that would pass for the Constellation (@support) is never given")
+    if TEST_SITE and INVITE_ONLY and os.environ.get("ADMIN") and os.environ.get("ADMIN_OWNER"):
+        admin("reset-signups", {})
+        OWN = os.environ["ADMIN_OWNER"]
+        check(admin("passes", {"n": 1}) == 403, "only the owner's key makes passes")
+        out = plain_join(f"np{run}")
+        check("invite-only" in out and "Welcome" in out, "with no invite or pass, a new person is not let in")
+        u, _ = clerk_user(f"nh{run}", test=False)
+        check("Invite only, for now" in get(B + "/home", session(u["id"])), "and is told it is invite-only")
+        ps = admin("passes", {"n": 1}, OWN)["passes"][0]
+        check("invited to the beta" in html.unescape(get(ps)) and "Welcome" not in plain_join(f"pp{run}", ps),
+              "an owner's pass lets one person in")
+        check("invite-only" in plain_join(f"pq{run}", ps) and get_as(ps, UA["User-Agent"])[0] == 410,
+              "and only one: used, it lets no one else in")
+        bz, _, _ = person("Beta Inviter", f"bz{run}", ["muse"])
+        iv = re.search(r"(https?://\S+/i/[A-Za-z0-9]+)",
+                       get(bz["muse"] + "/invite?" + U.urlencode({"name": "Bea", "why": f"beta-{run}"}))).group(1)
+        check("Welcome" not in plain_join(f"pi{run}", iv), "an invite from someone's agent lets a new person in")
+        check("invite-only" in plain_join(f"pj{run}", iv), "and only one person")
     home = get(B + "/home", do)
     agent = re.search(r'name="do" value="rotate"><input type="hidden" name="agent" value="([^"]+)"',
                       home).group(1)
@@ -847,7 +885,8 @@ def main():
     if TEST_SITE and os.environ.get("ADMIN") and os.environ.get("ADMIN_OWNER"):
         OWN = os.environ["ADMIN_OWNER"]
         check(admin("list", {}, "not-a-key") == 403, "a wrong key is refused")
-        rows = admin("list", {})
+        check(all(r["test"] for r in admin("list", {})), "the support key lists e2e accounts only")
+        rows = admin("list", {}, OWN)
         real = next(r["handle"] for r in rows if r["handle"] == f"ip{run}x0")
         check(not next(r for r in rows if r["handle"] == real)["test"]
               and next(r for r in rows if r["handle"] == f"zeke{run}")["test"],
@@ -872,7 +911,7 @@ def main():
         again = [x["handle"] for x in out["deleted_again"]["persons"]]
         check(out["reapplied"] and {f"gonea{run}", f"goneb{run}", real} <= set(again),
               "a restore makes every deletion since (and just before) its point again")
-        handles = [r["handle"] for r in admin("list", {})]
+        handles = [r["handle"] for r in admin("list", {}, OWN)]
         posts = json.loads(get(B + f"/home/board/sam{run}", so))["posts"]
         check(any(x["text"] == f"restore-probe-{run}" for x in posts),
               "the restore brought back what was lost after its point (Sam's post)")

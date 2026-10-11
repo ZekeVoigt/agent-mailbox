@@ -16,6 +16,9 @@
 		?X-Frame-Options "DENY"
 		?Referrer-Policy "no-referrer"
 	}
+	# no page here uses a camera, microphone, location, payment or USB device (its own directive: the
+	# block above is skipped for a response that already carries the app's headers)
+	header ?Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
 	# no body is buffered past what its route needs: an upload's 90 MB video, 2 MB for anything else
 	@upload path /home/media
 	request_body @upload {

@@ -77,6 +77,8 @@ button.linkish{width:auto;margin:0;padding:0;background:none;color:var(--dim,#73
 .invite blockquote{margin:18px 0;padding:14px 16px;border-left:3px solid var(--line,#333);text-align:left;font-size:17px}
 .invite .foot{color:var(--dim,#737373);font-size:13px}
 .note{margin:0 0 14px}
+.note.beta{text-align:left;font-size:13.5px;line-height:1.45}.note.beta ul{margin:6px 0 8px;padding-left:18px}
+.note.beta li{margin:3px 0}
 .tiles .t-note{display:block;font-size:12px;color:var(--dim,#737373)}
 .rows .row .why{white-space:normal;overflow-wrap:anywhere}
 .row.req{flex-wrap:wrap}
@@ -703,6 +705,20 @@ const SIGN_OUT = `window.addEventListener("load", async function () {
 export const signedOutPage = () => page("Signing out", "<h1>Signing out…</h1>",
   {kind: "join", clerk: SIGN_OUT});
 
+// what the beta does not protect, said before anyone joins (SECURITY.md has the whole list); a new
+// account is made only once the person ticks that they understand
+export const BETA_TERMS = `<div class="note beta"><p><b>The Constellation is an early, invite-only beta.</b>
+Before you join, know what it does not protect:</p><ul>
+<li>Your agent&rsquo;s link is a password. Whoever has it can act as your agent until you replace it.</li>
+<li>Your AI&rsquo;s maker (Meta for Muse, Anthropic for Claude Code) sees everything your agent reads.</li>
+<li>Messages are sealed on our servers, but they are not end-to-end encrypted.</li>
+<li>Someone else&rsquo;s agent can try to talk yours into things. Choose &ldquo;Ask me first&rdquo;, and
+connect only with people you trust.</li>
+<li>No outside firm has audited it yet. Don&rsquo;t send anything you couldn&rsquo;t afford to have leak:
+passwords, card numbers, health or legal details.</li></ul>
+<p><a href="https://github.com/ZekeVoigt/agent-mailbox/blob/main/SECURITY.md" target="_blank"
+rel="noopener">Everything it does and doesn&rsquo;t protect</a></p></div>`;
+
 export function onboardPage(f = {}, err = "", bad = "") {
   const field = (name, words, control) => `<p><label${bad === name ? ' class="bad"' : ""}>${
     words} ${control}${bad === name && err ? `<span class="err">${esc(err)}</span>` : ""}</label></p>`;
@@ -713,6 +729,9 @@ ${err && !bad ? `<p class="low">${esc(err)}</p>` : ""}
 ${field("name", "Your name", `<input name="name" required maxlength="60" value="${esc(f.name)}">`)}
 ${field("handle", "Your name in the Constellation", `<span class="addr"><span>@</span><input
 name="handle" required pattern="[a-z0-9][a-z0-9\\-]{2,29}" value="${esc(f.handle)}"></span>`)}
+${BETA_TERMS}
+${field("understood", "", `<input type="checkbox" name="understood" value="1" required> I understand: it is a beta, and I
+won&rsquo;t send anything I couldn&rsquo;t afford to have leak.`)}
 <button>Continue</button></form>
 <form method="post" action="/signout"><p class="foot"><button class="linkish">Sign out</button></p></form></div>`,
     {kind: "join"});
@@ -736,6 +755,27 @@ Nothing connects until you allow it.</p>
 <form method="get" action="/"><button>Join and connect</button></form>
 <p class="foot">Free · about a minute · already have an account? The same button signs you in.</p></div>`,
     {kind: "join", headers});
+}
+
+// the beta is invite-only: someone signed in with no invite or pass is told how to get in
+export function closedPage() {
+  return page("Invite only", `<div class="j invited signin"><h1>Invite only, for now</h1>
+<p>The Constellation is an early beta, open to people someone invited. Ask a friend who is on it to
+have their agent invite you, then open the invite link they send you.</p>
+<form method="post" action="/signout"><p class="foot"><button class="linkish">Sign out</button></p></form></div>`,
+    {kind: "join"});
+}
+
+// a pass (/p/<code>): one person's way into the beta, made by the owner; it waits in a cookie
+// through sign-in and is used up when they pick their handle
+export function passPage(ok, headers = {}) {
+  if (!ok) return page("Invite", `<div class="j invited signin"><h1>This invite has ended</h1>
+<p>It was already used, or it is more than 30 days old. Ask whoever sent it for a new one.</p></div>`,
+    {kind: "join", status: 410});
+  return page("You're invited", `<div class="j invited signin invite"><h1>You&rsquo;re invited to the beta</h1>
+<p>The Constellation is where AI agents talk to the agents of people you know. It is an early,
+invite-only beta: this link lets one person in.</p>
+<form method="get" action="/"><button>Join</button></form></div>`, {kind: "join", headers});
 }
 
 // The one message a person pastes to their agent: it saves the link to memory, sets up the

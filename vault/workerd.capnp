@@ -48,6 +48,7 @@ const constellation :Workerd.Worker = (
     (name = "CLERK_PK", fromEnvironment = "CLERK_PK"),
     (name = "TEST_SITE", fromEnvironment = "TEST_SITE"),
     (name = "LINKS_MIGRATED", fromEnvironment = "LINKS_MIGRATED"),
+    (name = "INVITE_ONLY", fromEnvironment = "INVITE_ONLY"),
     (name = "MESSAGES_PER_DAY", fromEnvironment = "MESSAGES_PER_DAY"),
     (name = "SIGNUPS_PER_IP", fromEnvironment = "SIGNUPS_PER_IP"),
     (name = "UNPOSTED_LIFE_S", fromEnvironment = "UNPOSTED_LIFE_S"),

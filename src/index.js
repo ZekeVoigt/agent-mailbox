@@ -17,7 +17,7 @@
 // end-to-end encrypted: whoever runs this Worker can read messages (SECURITY.md).
 
 import {TILES, prefsOf, SEND, EVERY, OFFER, homePage, signInPage, signedOutPage, onboardPage, handOver, clerkFrame,
-  errorPage, invitePage, passkeyPage, device, PERMS, PERM_DEFAULT, permWords} from "./ui.js";
+  errorPage, invitePage, passkeyPage, device, PERMS, PERM_DEFAULT, permWords, closedPage, passPage} from "./ui.js";
 import * as A2A from "./a2a.js";
 import {verifyClerk, clerkUser, revokeClerkSessions, configureClerk} from "./auth.js";
 import {newChallenge, createOptions, getOptions, verifyCreate, verifyGet, b64u} from "./passkey.js";
@@ -51,6 +51,13 @@ const LINK_IDLE = 30 * 86400e3, MESSAGES_PER_DAY = 300;
 const UNPOSTED_MAX = 12, UNPOSTED_LIFE = 86400e3;
 const SESSION_IDLE = 7 * 86400e3, SESSION_MAX = 30 * 86400e3, AUDIT_KEEP = 365 * 86400e3;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,29}$/;
+// handles no one may take: they would pass for the Constellation itself
+const RESERVED = new Set(["admin", "administrator", "support", "security", "help", "helpdesk", "abuse",
+  "constellation", "andromeda", "ai-andromeda", "official", "staff", "team", "root", "system", "operator",
+  "owner", "moderator", "mod", "safety", "trust", "billing", "noreply", "no-reply", "verify", "verified"]);
+// INVITE_ONLY=1 (the beta): a new account needs an invite from someone's agent (/i/) or a pass from
+// the owner (/p/), used up when its person picks a handle; an e2e account (marked by Clerk's backend) needs neither
+const PASS_LIFE = 30 * 86400e3;
 const SECRET_RE = /^[A-Za-z0-9]{20,48}$/;
 const AGENTS = TILES.map(t => t.id);
 // which agents Add offers: AGENTS_OFFERED (production: "muse"), else all of them; an e2e account
@@ -234,8 +241,18 @@ export class Directory {
     this.sql.exec("CREATE TABLE IF NOT EXISTS vote (post TEXT, handle TEXT, choice INTEGER, at INTEGER, " +
       "PRIMARY KEY (post, handle))");
     this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS person_clerk ON person (clerk)");
+    // the beta's passes (the owner's): `code` is the link's digest; `used_by` the handle it let in
+    this.sql.exec("CREATE TABLE IF NOT EXISTS pass (code TEXT PRIMARY KEY, at INTEGER, used_by TEXT)");
   }
   one(q, ...a) { return this.sql.exec(q, ...a).toArray()[0] || null; }
+  // which way in a new person has: "pass", "invite" (one not yet used by anyone), or null
+  admission(b, now) {
+    if (b.pass && this.one("SELECT 1 FROM pass WHERE code = ? AND used_by IS NULL AND at > ?", b.pass, now - PASS_LIFE))
+      return "pass";
+    if (b.invite && this.one("SELECT 1 FROM invite WHERE code = ? AND done = 0 AND claimed_by IS NULL AND at > ?",
+        b.invite, now - INVITE_LIFE)) return "invite";
+    return null;
+  }
   all(q, ...a) { return this.sql.exec(q, ...a).toArray(); }
   withAgents(person) {
     if (!person) return null;
@@ -324,23 +341,20 @@ export class Directory {
     const p = new URL(req.url).pathname, b = await req.json();
     const now = Date.now();
     if (p === "/by-clerk") return json(this.withAgents(this.one("SELECT * FROM person WHERE clerk = ?", b.clerk)));
-    if (p === "/claim") {             // an account from before Clerk: its owner link binds it once
-      const person = this.one("SELECT handle, clerk FROM person WHERE owner = ?", b.owner);
-      if (!person) return json({error: "That link doesn't work."}, 404);
-      if (person.clerk && person.clerk !== b.clerk)
-        return json({error: "That account already belongs to another sign-in."}, 409);
-      if (this.one("SELECT 1 FROM person WHERE clerk = ? AND handle != ?", b.clerk, person.handle))
-        return json({error: "You already have an account here."}, 409);
-      this.sql.exec("UPDATE person SET clerk = ? WHERE handle = ?", b.clerk, person.handle);
-      return json({ok: true, handle: person.handle});
-    }
     if (p === "/join") {              // a signed-in Clerk user picks their handle
       if (this.one("SELECT 1 FROM person WHERE clerk = ?", b.clerk)) return json({ok: true});
-      if (this.one("SELECT 1 FROM person WHERE handle = ?", b.handle))
+      if (this.one("SELECT 1 FROM person WHERE handle = ?", b.handle) || RESERVED.has(b.handle))
         return json({error: `@${b.handle} is taken: try another.`, field: "handle"}, 409);
       this.sql.exec("DELETE FROM signup WHERE at < ?", now - 86400e3);
       if (!b.test && this.one("SELECT count(*) n FROM signup WHERE ip = ?", b.ip || "").n >= (b.most || SIGNUPS_PER_IP))
         return json({error: "Too many new accounts from your network today: try again tomorrow."}, 429);
+      // the beta: an unused invite or pass lets one person in, and is used up here, in the same step
+      if (b.gate) {
+        const way = this.admission(b, now);
+        if (!way) return json({error: "The Constellation is invite-only for now: open the invite link you were sent."}, 403);
+        if (way === "pass") this.sql.exec("UPDATE pass SET used_by = ? WHERE code = ?", b.handle, b.pass);
+        else this.sql.exec("UPDATE invite SET claimed_by = ? WHERE code = ?", b.handle, b.invite);
+      }
       this.sql.exec("INSERT INTO person (handle, name, bio, owner, findable, primary_agent, at, " +
         "clerk, test) VALUES (?, ?, '', ?, 1, NULL, ?, ?, ?)", b.handle, b.name, "clerk:" + b.clerk, now,
         b.clerk, b.test ? 1 : 0);
@@ -369,6 +383,14 @@ export class Directory {
       this.sql.exec("INSERT OR REPLACE INTO silence VALUES (?, ?, ?)", b.target, b.sender, now + QUIET_AFTER_DECLINE);
       return json({ok: true});
     }
+    if (p === "/admission") return json({way: this.admission(b, now)});
+    if (p === "/pass-new") {
+      this.sql.exec("DELETE FROM pass WHERE at < ? AND used_by IS NULL", now - PASS_LIFE);
+      for (const c of b.codes || []) this.sql.exec("INSERT INTO pass (code, at) VALUES (?, ?)", c, now);
+      return json({ok: true});
+    }
+    if (p === "/pass-get") return json({ok: !!this.one("SELECT 1 FROM pass WHERE code = ? AND used_by IS NULL AND at > ?",
+      b.code, now - PASS_LIFE)});
     if (p === "/test-reset-signups") { this.sql.exec("DELETE FROM signup"); return json({ok: true}); }
     if (p === "/test-age-person") {   // the operator's, on a test site: an account as if made days ago
       this.sql.exec("UPDATE person SET at = ? WHERE handle = ?", now - 3 * 86400e3, b.handle);
@@ -478,7 +500,8 @@ export class Directory {
       this.sql.exec("UPDATE invite SET done = 1 WHERE code = ?", b.code);
       return json({ok: true});
     }
-    if (p === "/list") return json(this.all("SELECT handle, name, at, clerk, test FROM person ORDER BY at"));
+    if (p === "/list") return json(this.all("SELECT handle, name, at, clerk, test FROM person " +
+      (b.all ? "" : "WHERE test = 1 ") + "ORDER BY at"));
     if (p === "/links-set") {
       this.sql.exec("UPDATE person SET links = ? WHERE handle = ?", JSON.stringify(b.links || []), b.handle);
       return json({ok: true});
@@ -1563,6 +1586,15 @@ const audit = (env, req, clerk, what) => call(dir(env), "/audit-add", {clerk, wh
 const INV_RE = /(?:^|;\s*)inv=([A-Za-z0-9]{20,48})(?:;|$)/;
 const invCookie = raw => `inv=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${INVITE_LIFE / 1000}`;
 const clearInv = "inv=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+const PASS_RE = /(?:^|;\s*)ps=([A-Za-z0-9]{20,48})(?:;|$)/;
+const passCookie = raw => `ps=${raw}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${PASS_LIFE / 1000}`;
+const clearPass = "ps=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+const inviteOnly = env => env.INVITE_ONLY === "1";
+// the digests of the invite and pass this browser carries, for the beta's door
+async function waysIn(req) {
+  const c = req.headers.get("cookie") || "", inv = INV_RE.exec(c), ps = PASS_RE.exec(c);
+  return {invite: inv ? await digest(inv[1]) : null, pass: ps ? await digest(ps[1]) : null};
+}
 
 // never fails its caller: an invite that cannot be delivered (or a directory still running older
 // code mid-deploy, which answers "unknown") must not break Add or the dashboard
@@ -1585,7 +1617,8 @@ async function getInvite(req, env, raw) {
   const code = await digest(raw), inv = await call(dir(env), "/invite-get", {code});
   if (!inv || !inv.handle) return (await missed(env, req)) || invitePage(null);
   const ses = await sessionOf(env, req);
-  const person = ses && await call(dir(env), "/by-clerk", {clerk: ses.clerk});
+  // a session no passkey has unlocked acts for no one: it only sees the invite
+  const person = ses && ses.pk && await call(dir(env), "/by-clerk", {clerk: ses.clerk});
   if (person) {                      // already here: the request goes straight to them
     if (person.handle !== inv.handle && (await call(dir(env), "/invite-claim", {code, handle: person.handle})).ok)
       await deliverInvites(env, person);
@@ -1637,6 +1670,7 @@ async function getHome(req, env) {
   const person = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
   if (!person) {
     const u = await clerkUser(env, ses.clerk);
+    if (inviteOnly(env) && !u.test && !(await call(dir(env), "/admission", await waysIn(req))).way) return closedPage();
     const handle = (u.username || (u.email || "").split("@")[0] || "").toLowerCase()
       .replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 30);
     return onboardPage({name: u.name || "", handle});
@@ -1700,12 +1734,16 @@ async function postHome(req, env, url) {
     if (!name) return onboardPage({name, handle}, "Add your name.", "name");
     if (!HANDLE_RE.test(handle))
       return onboardPage({name, handle}, "3 to 30 lowercase letters, digits or dashes.", "handle");
+    if (f.understood !== "1")
+      return onboardPage({name, handle}, "Tick that you understand what the beta does not protect.", "understood");
     const u = await clerkUser(env, ses.clerk);
     const got = await call(dir(env), "/join", {clerk: ses.clerk, handle, name, ip: who(req).ip, test: !!u.test,
-      most: Number(env.SIGNUPS_PER_IP) || undefined});
+      most: Number(env.SIGNUPS_PER_IP) || undefined, gate: inviteOnly(env) && !u.test, ...await waysIn(req)});
     if (got.error) return onboardPage({name, handle}, got.error, got.field || "");
     await log(`Created @${handle}`);
-    return back("add");
+    await log("Accepted what the beta does not protect");
+    // the pass is used up: its cookie goes (Response.redirect's headers cannot be changed)
+    return new Response(null, {status: 303, headers: {location: `${url.origin}/home#add`, "set-cookie": clearPass}});
   }
   const person = await call(dir(env), "/by-clerk", {clerk: ses.clerk});
   if (!person) return Response.redirect(`${url.origin}/home`, 303);
@@ -2166,7 +2204,7 @@ async function adminRoute(req, env, op) {
   // support may act on an e2e account only; the owner on anyone
   const who_ = handle && await call(dir(env), "/person-of", {handle});
   const mayTouch = async () => owner || !!(who_ && who_.test);
-  if (op === "list") return json(await call(dir(env), "/list", {}));
+  if (op === "list") return json(await call(dir(env), "/list", {all: owner}));
   if (op === "reset-signups" && env.TEST_SITE === "1") return json(await call(dir(env), "/test-reset-signups", {}));
   if (op === "age-person" && env.TEST_SITE === "1" && handle)
     return json(await call(dir(env), "/test-age-person", {handle}));
@@ -2222,6 +2260,12 @@ async function adminRoute(req, env, op) {
         connected: others.filter(x => x.state === "connected").length});
     }
     return json(out);
+  }
+  if (op === "passes") {             // the beta: one-use links that each let one person in
+    const n = Math.max(1, Math.min(50, Math.round(Number(b.n) || 1)));
+    const raws = Array.from({length: n}, () => secret());
+    await call(dir(env), "/pass-new", {codes: await Promise.all(raws.map(r => digest(r)))});
+    return json({passes: raws.map(r => `${new URL(req.url).origin}/p/${r}`), days: PASS_LIFE / 86400e3});
   }
   if (op === "migrate-links") {       // every link into its ref; then set LINKS_MIGRATED=1
     let n = 0;
@@ -2322,7 +2366,7 @@ async function limited(env, req) {
   const until = blocked.get(ip);
   if (until && until > Date.now()) return LIMITED();
   if (until) blocked.delete(ip);
-  if (blocked.size > 10000) blocked.clear();
+  if (blocked.size > 10000) for (const [k, t] of blocked) if (t <= Date.now()) blocked.delete(k);
   if (env.RL_IP && !(await env.RL_IP.limit({key: ip})).success) return LIMITED();
   return null;
 }
@@ -2409,18 +2453,13 @@ async function route(req, env) {
   if (parts[0] === "i" && SECRET_RE.test(parts[1] || "") && req.method === "GET")
     return getInvite(req, env, parts[1]);
   if (parts[0] === "i" && req.method === "HEAD") return new Response(null, {status: 405, headers: H});
-  if (parts[0] === "o" && SECRET_RE.test(parts[1] || "")) {
-    // a private page link from before Clerk: signed in, it moves that account to this sign-in
-    const ses = await sessionOf(env, req);
-    if (!ses) return signInPage("Sign in first; then open your old page link again to keep your account.");
-    const got = await call(dir(env), "/claim", {owner: await digest(parts[1]), clerk: ses.clerk});
-    if (got.error) return onboardPage({}, got.error);
-    await audit(env, req, ses.clerk, `Claimed @${got.handle}`);
-    return Response.redirect(`${url.origin}/home`, 303);
+  if (parts[0] === "p" && SECRET_RE.test(parts[1] || "") && req.method === "GET") {
+    const ok = (await call(dir(env), "/pass-get", {code: await digest(parts[1])})).ok;
+    if (!ok) return (await missed(env, req)) || passPage(false);
+    return passPage(true, {"set-cookie": passCookie(parts[1])});
   }
+  if (parts[0] === "p" && req.method === "HEAD") return new Response(null, {status: 405, headers: H});
   if (parts[0] === "admin" && req.method === "POST") return adminRoute(req, env, parts[1] || "");
-  // the first test mailbox stays reachable while it is in use
-  if (parts[0] === "m") return env.BOX.get(env.BOX.idFromName(parts[1] || "")).fetch(req);
   return text("Unknown address.", 404);
 }
 

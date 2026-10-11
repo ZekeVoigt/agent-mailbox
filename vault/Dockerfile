@@ -11,6 +11,8 @@ RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts=false
 FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY --from=caddy /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# npm is only for building: the running Vault never uses it (it carried every Node CVE the scan found)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 COPY --from=deps /vault/vault/node_modules /vault/vault/node_modules
 COPY src /vault/src
 COPY vault/workerd.capnp vault/entry.js vault/Caddyfile vault/package.json /vault/vault/
